@@ -1,15 +1,49 @@
 # Agent Researcher
 
-Локальный хелпер продуктового аналитика. **Шаг 1:** brief → план исследования (`analysis-plan.md`) через Lead → Analyst → Lead. Правки и утверждение — только в чате.
+Локальный хелпер продуктового аналитика: от brief до Quarto-отчёта (R + plotly) с визуальным design review.
+
+Пайплайн в чате: **план → сверка данных → скелет → отчёт (`report.qmd` → HTML) → правки**.
+
+## Требования
+
+### Рекомендуемый путь — Docker
+
+Нужно только:
+
+- **Docker** + **Docker Compose** (v2)
+- Аккаунты и ключи API:
+  - `OPENAI_API_KEY`
+  - `ANTHROPIC_API_KEY`  
+  (оба: в `config.yaml` разные агенты ходят в разные провайдеры)
+- Свободный порт **8787**
+
+R, Quarto, pandoc, Chromium и R-пакеты для knit уже внутри образа — отдельно ставить не нужно.
+
+### Локально без Docker
+
+Дополнительно к ключам:
+
+| Что | Зачем |
+|-----|--------|
+| **Python ≥ 3.12** | приложение (FastAPI / uvicorn) |
+| **R** (+ dev-заголовки под вашу ОС) | чанки в `report.qmd` |
+| **R-пакеты** из `docker/install_r_packages.R` | `plotly`, `dplyr`, `readr`, `knitr`, `rmarkdown`, … |
+| **[Quarto CLI](https://quarto.org/docs/get-started/)** | `quarto render` → HTML |
+| **Chromium / Chrome** | скриншоты HTML для Designer |
+
+Без R/Quarto UI и чат поднимутся, но сборка/рендер отчёта не заведутся. Без браузера design review со скриншотами не отработает.
 
 ## Быстрый старт (Docker)
 
 ```bash
-cd ~/Work/my-projects/agent-researcher
-cp .env.example .env   # OPENAI_API_KEY / ANTHROPIC_API_KEY
+git clone git@github.com:Paxdelph/agent-researcher.git
+cd agent-researcher
+
+cp .env.example .env          # вписать ключи
 cp config.example.yaml config.yaml
 
-# опционально: symlink launcher
+# опционально: команда из любой research-папки
+mkdir -p ~/.local/bin
 ln -sfn "$PWD/scripts/agent-research" ~/.local/bin/agent-research
 
 cd researches/example
@@ -18,17 +52,25 @@ agent-research --build
 
 UI: http://127.0.0.1:8787
 
-Флаги: `--build`, `--reset`, `-d`.
+Флаги launcher’а: `--build`, `--reset`, `-d` / `--detach`.
+
+Или без symlink:
+
+```bash
+RESEARCH_PATH=./researches/example docker compose up --build
+```
+
+Общий контекст компании: `researches/context.md` (для `researches/example`). Override: `CONTEXT_FILE=/path/to/context.md`.
 
 ## Как пользоваться
 
-1. Brief → «сделай план» (Lead → Analyst → Lead).
-2. «Едем дальше» → данные в `data/` → «проверь данные».
-3. «Сделай скелет» (Lead → Analyst → Storyteller → **BI Analyst** viz-pass).
-4. «Собери отчёт» — **Coder** пишет `report.qmd` (R + plotly), рендер HTML, **Designer** визуально ревьюит (один раунд фикса).
-5. Правки кода в чате снова гоняют design review.
+1. Brief в чате → «сделай план» (Lead → Analyst → Lead) → `analysis-plan.md`.
+2. Положи CSV в `data/` → «проверь данные» → `data-review.md`.
+3. «Сделай скелет» (Lead → Analyst → Storyteller → BI Analyst) → `skeleton.md`.
+4. «Собери отчёт» — Coder пишет `report.qmd`, Quarto рендерит HTML, Designer один раунд визуального ревью.
+5. Правки в чате правят `.qmd` точечно; полный пересбор — по явной просьбе («с нуля» / «переделай»).
 
-UI: http://127.0.0.1:8787
+Формат отчётов: Quarto extension **`researcher-html`** (тема и семантика `.finding` / `.kpi` / …).
 
 ## Локально без Docker
 
@@ -37,22 +79,35 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
+# R-пакеты (нужен установленный R):
+Rscript docker/install_r_packages.R
+
+cp .env.example .env
+cp config.example.yaml config.yaml
+
 export WORKSPACE_PATH=./researches/example
+export CONTEXT_PATH=./researches/context.md
 export STATE_DIR=./.app-state
 export AGENT_RESEARCHER_CONFIG=./config.yaml
-# + API keys in env
+# ключи уже в .env — подхватите через set -a; source .env; set +a
 
 uvicorn app.main:app --host 0.0.0.0 --port 8787 --reload
 ```
 
 ## Структура
 
-- `app/orchestration/planning.py` — Lead → Analyst → Lead
-- `app/orchestration/chat.py` — interpret / edit / advance
-- `app/skills/` — инструкции (не stage-промпты)
-- `app/prompts/` — короткие роли Lead / Analyst
-- `scripts/agent-research` — запуск из папки анализа
+| Путь | Назначение |
+|------|------------|
+| `app/` | FastAPI UI, оркестрация, провайдеры LLM |
+| `app/skills/` | инструкции агентам |
+| `app/prompts/` | короткие роли (Lead, Analyst, Coder, …) |
+| `quarto/_extensions/researcher/` | формат `researcher-html` |
+| `researches/` | папки рисерчей + общий `context.md` |
+| `scripts/agent-research` | запуск compose из папки анализа |
+| `config.example.yaml` | шаблон конфига (локальный `config.yaml` в git не кладётся) |
 
-## Папка анализа
+## Папка рисерча
 
-Любая директория с `data/` (создаётся launcher'ом при необходимости). Артефакт шага 1: `analysis-plan.md` в корне workspace.
+Любая директория (launcher создаст `data/` при необходимости). Рядом уровнем выше — общий `context.md`.
+
+Типичные артефакты: `analysis-plan.md`, `data-review.md`, `skeleton.md`, `report.qmd`, `report.html`, `design-review.md`.
