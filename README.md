@@ -115,7 +115,6 @@ agent-research --build
 | `skeleton.md` | Каркас отчёта: секции, тезисы, какие графики |
 | `report.qmd` | Исходник отчёта (Quarto + R + plotly) |
 | `report.html` | Собранный HTML для чтения / шаринга |
-| `design-review.md` | Замечания Designer по визуалу HTML |
 
 Формат отчётов: extension **`researcher-html`** (единая тема, блоки вроде `.finding` / `.kpi`).
 
