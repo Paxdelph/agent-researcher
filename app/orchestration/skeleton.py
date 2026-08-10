@@ -7,31 +7,9 @@ from pathlib import Path
 from app.agents.runner import read_workspace_text, run_agent, write_workspace_text
 from app.config import get_settings
 from app.models import ChatMessage, ResearchState, Stage, Status
+from app.orchestration.context import artifacts_block
 from app.orchestration.parse import parse_chat_decision, strip_markdown_fence
 from app.orchestration.planning import brief_block
-from app.workspace_paths import company_context_path
-
-
-def _artifacts_block(workspace: Path) -> str:
-    settings = get_settings()
-    parts: list[str] = []
-    for label, rel in (
-        ("Analysis plan", settings.research.plan_file),
-        ("Data review", settings.research.data_review_file),
-    ):
-        text = read_workspace_text(workspace, rel).strip()
-        parts.append(f"## {label} (`{rel}`)\n{text or '(файл отсутствует)'}\n")
-
-    ctx_path = company_context_path(settings)
-    if ctx_path.exists():
-        ctx_text = ctx_path.read_text(encoding="utf-8").strip()
-    else:
-        ctx_text = ""
-    parts.append(
-        f"## Product context (company) (`{ctx_path}`)\n"
-        f"{ctx_text or '(файл отсутствует)'}\n"
-    )
-    return "\n".join(parts)
 
 
 async def run_skeleton(state: ResearchState, workspace: Path) -> ResearchState:
@@ -41,7 +19,7 @@ async def run_skeleton(state: ResearchState, workspace: Path) -> ResearchState:
     state.error = None
 
     brief = brief_block(state, workspace)
-    arts = _artifacts_block(workspace)
+    arts = artifacts_block(workspace)
 
     draft = await run_agent(
         state=state,
@@ -115,6 +93,7 @@ async def run_skeleton(state: ResearchState, workspace: Path) -> ResearchState:
             "Сохрани формат report_skeleton. Верни только полный markdown `skeleton.md`.\n\n"
             f"## Central brief\n{brief}\n\n"
             f"## Plan / data context\n{arts}\n"
+            f"## Analyst critique (сохрани ограничения)\n{state.skeleton_critique}\n"
             f"## Current skeleton\n{mid_text}\n"
         ),
         summary="Storyteller: narrative pass",
@@ -135,6 +114,7 @@ async def run_skeleton(state: ResearchState, workspace: Path) -> ResearchState:
             "Не меняй RQ и методологию, не выдумывай поля. Верни полный `skeleton.md`.\n\n"
             f"## Brief\n{brief}\n\n"
             f"{arts}\n"
+            f"## Analyst critique (не добавляй невозможные срезы)\n{state.skeleton_critique}\n"
             f"## Skeleton after storytelling\n{story_text}\n"
         ),
         summary="BI Analyst: viz-pass скелета",
@@ -176,6 +156,7 @@ async def apply_skeleton_edit(
     if not existing:
         raise RuntimeError("skeleton.md ещё нет — сначала соберите скелет")
 
+    arts = artifacts_block(workspace)
     result = await run_agent(
         state=state,
         agent_name="lead",
@@ -186,7 +167,8 @@ async def apply_skeleton_edit(
             f"## Current skeleton\n{existing}\n\n"
             f"## User message\n{user_message}\n"
             + (f"\n## Reply hint\n{reply_hint}\n" if reply_hint else "")
-            + f"\n## Brief\n{brief_block(state, workspace)}\n"
+            + f"\n## Brief\n{brief_block(state, workspace)}\n\n"
+            f"{arts}\n"
         ),
         summary="Lead: правка скелета",
         json_mode=True,
@@ -195,6 +177,8 @@ async def apply_skeleton_edit(
             "artifact_edit",
             "report_skeleton",
             "storytelling",
+            "research_design",
+            "product_analytics",
         ],
     )
     decision = parse_chat_decision(result.text)

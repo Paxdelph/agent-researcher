@@ -7,6 +7,7 @@ from pathlib import Path
 from app.agents.runner import read_workspace_text, run_agent, write_workspace_text
 from app.config import get_settings
 from app.models import ChatMessage, ImagePart, ResearchState, Stage, Status
+from app.orchestration.context import artifact_excerpt, coding_context_block
 from app.orchestration.parse import extract_qmd, parse_json_object
 from app.orchestration.planning import brief_block
 from app.orchestration.render import (
@@ -14,41 +15,9 @@ from app.orchestration.render import (
     html_excerpt,
     images_as_base64,
     render_quarto,
+    report_data_warnings,
     screenshot_html,
 )
-from app.workspace_paths import company_context_path
-
-
-def _context_block(workspace: Path) -> str:
-    settings = get_settings()
-    parts: list[str] = []
-    for label, rel in (
-        ("Skeleton", settings.research.skeleton_file),
-        ("Analysis plan", settings.research.plan_file),
-        ("Data review", settings.research.data_review_file),
-    ):
-        text = read_workspace_text(workspace, rel).strip()
-        parts.append(f"## {label} (`{rel}`)\n{text or '(файл отсутствует)'}\n")
-
-    ctx_path = company_context_path(settings)
-    if ctx_path.exists():
-        ctx_text = ctx_path.read_text(encoding="utf-8").strip()
-    else:
-        ctx_text = ""
-    parts.append(
-        f"## Product context (company) (`{ctx_path}`)\n"
-        f"{ctx_text or '(файл отсутствует)'}\n"
-    )
-
-    data_dir = workspace / get_settings().workspace.data_dir
-    if data_dir.exists():
-        files = sorted(p.name for p in data_dir.glob("*.csv"))
-        parts.append(
-            "## Data CSV files\n"
-            + (", ".join(f"`data/{n}`" for n in files) if files else "(нет csv)")
-            + "\n"
-        )
-    return "\n".join(parts)
 
 
 def _parse_design(text: str) -> dict:
@@ -80,10 +49,12 @@ async def _run_designer(
     ]
 
     skeleton = read_workspace_text(workspace, settings.research.skeleton_file)
+    data_review = read_workspace_text(workspace, settings.research.data_review_file)
     user_bits = [
         f"Это просмотр #{pass_index} (максимум 2: первичный и после одного фикса Coder).",
         "Сделай design review по skill design_review. Верни только JSON.",
-        f"## Skeleton (ориентир секций)\n{skeleton[:8000] or '(нет)'}\n",
+        f"## Skeleton (ориентир секций)\n{artifact_excerpt(skeleton) or '(нет)'}\n",
+        f"## Data review (колонки/ограничения)\n{artifact_excerpt(data_review, max_chars=6000) or '(нет)'}\n",
     ]
     if images:
         user_bits.append(
@@ -119,6 +90,52 @@ def _render_and_store(state: ResearchState, workspace: Path) -> Path:
     return html_path
 
 
+async def _render_with_data_check(
+    state: ResearchState,
+    workspace: Path,
+    *,
+    allow_data_fix: bool,
+) -> Path:
+    """Render HTML; if report looks empty, one Coder pass to wire CSV schema."""
+    settings = get_settings()
+    html_path = _render_and_store(state, workspace)
+    warnings = report_data_warnings(html_path)
+    if not warnings or not allow_data_fix:
+        if warnings:
+            raise RenderError(
+                "Отчёт собрался без данных (проверь колонки CSV vs setup-чанк):\n"
+                + "\n".join(f"- {w}" for w in warnings)
+            )
+        return html_path
+
+    current = read_workspace_text(workspace, settings.research.report_file)
+    ctx = coding_context_block(workspace)
+    issues = "\n".join(f"- {w}" for w in warnings)
+    await _coder_write(
+        state,
+        workspace,
+        summary="Coder: подключение данных в report.qmd",
+        user_message=(
+            "Quarto отрендерился, но отчёт пустой — данные не подключены.\n"
+            "Исправь setup/чтение CSV: используй **реальные** имена колонок и "
+            "`event_name` из Data review / Fresh profile. Не выдумывай `event_time`, "
+            "`checkout_start` и т.п.\n"
+            "Верни полный обновлённый `report.qmd`.\n\n"
+            f"## Проблемы в HTML\n{issues}\n\n"
+            f"{ctx}\n\n"
+            f"## Current report.qmd\n```qmd\n{current}\n```\n"
+        ),
+    )
+    html_path = _render_and_store(state, workspace)
+    warnings = report_data_warnings(html_path)
+    if warnings:
+        raise RenderError(
+            "После правки данные всё ещё не подключены:\n"
+            + "\n".join(f"- {w}" for w in warnings)
+        )
+    return html_path
+
+
 async def _coder_write(
     state: ResearchState,
     workspace: Path,
@@ -139,9 +156,6 @@ async def _coder_write(
         ],
     )
     qmd = extract_qmd(result.text)
-    if "---" not in qmd[:200] and "```{r}" not in qmd:
-        # still accept; coder may have omitted yaml in edge cases
-        pass
     settings = get_settings()
     path = write_workspace_text(workspace, settings.research.report_file, qmd)
     state.artifacts.report = str(path)
@@ -199,9 +213,12 @@ async def _design_cycle(
 ) -> ResearchState:
     """Render → Designer; optional one Coder fix → re-render → Designer."""
     settings = get_settings()
+    ctx = coding_context_block(workspace)
 
     try:
-        html_path = _render_and_store(state, workspace)
+        html_path = await _render_with_data_check(
+            state, workspace, allow_data_fix=True
+        )
     except RenderError as exc:
         return _fail_render(state, exc)
 
@@ -218,21 +235,24 @@ async def _design_cycle(
             summary="Coder: фикс по design review",
             user_message=(
                 "Исправь визуальные замечания Designer. Один раунд фикса. "
-                "Верни полный обновлённый `report.qmd`.\n\n"
+                "Верни полный обновлённый `report.qmd`.\n"
+                "Сохрани подключение данных к реальным колонкам из data-review.\n\n"
                 f"## Designer issues\n{issues_block}\n\n"
                 f"## Designer notes\n{review['notes'] or '(нет)'}\n\n"
+                f"{ctx}\n\n"
                 f"## Current report.qmd\n```qmd\n{current}\n```\n"
             ),
         )
         try:
-            html_path = _render_and_store(state, workspace)
+            html_path = await _render_with_data_check(
+                state, workspace, allow_data_fix=False
+            )
         except RenderError as exc:
             return _fail_render(state, exc, after_fix=True)
 
         review = await _run_designer(
             state, workspace, pass_index=2, html_path=html_path
         )
-        # Second pass: force ship even if revise (max one fix round)
         if review["verdict"] == "revise":
             review = {
                 "verdict": "approve",
@@ -287,7 +307,7 @@ async def run_coding(state: ResearchState, workspace: Path) -> ResearchState:
     state.error = None
 
     brief = brief_block(state, workspace)
-    ctx = _context_block(workspace)
+    ctx = coding_context_block(workspace)
 
     await _coder_write(
         state,
@@ -297,7 +317,7 @@ async def run_coding(state: ResearchState, workspace: Path) -> ResearchState:
             "Собери полный `report.qmd` по skill quarto_coding и скелету.\n"
             "Format: `researcher-html: default`. Без CSS/`<style>`.\n"
             "Plotly без modeBar. Semantic-блоки (.finding/.kpi/.warning/.recommendation).\n"
-            "Только реальные поля данных.\n\n"
+            "Только реальные поля данных из Data review / Fresh profile.\n\n"
             f"## Brief\n{brief}\n\n"
             f"{ctx}\n"
         ),
@@ -327,6 +347,7 @@ async def apply_coding_edit(
     state.status = Status.RUNNING
     state.error = None
 
+    ctx = coding_context_block(workspace, include_profile=False)
     result = await run_agent(
         state=state,
         agent_name="coder",
@@ -334,6 +355,7 @@ async def apply_coding_edit(
         user_message=(
             "Точечная правка уже собранного `report.qmd`.\n"
             "НЕ переписывай файл целиком. НЕ трогай секции вне запроса.\n"
+            "Сохраняй реальные имена колонок из data-review.\n"
             "Верни ТОЛЬКО JSON:\n"
             '{"edits":[{"find":"точный уникальный фрагмент из файла",'
             '"replace":"тот же фрагмент с правкой"}],'
@@ -346,6 +368,7 @@ async def apply_coding_edit(
             "- без markdown-преамбулы вокруг JSON\n\n"
             f"## User request\n{user_message}\n"
             + (f"\n## Reply hint\n{reply_hint}\n" if reply_hint else "")
+            + f"\n{ctx}\n"
             + f"\n## Current report.qmd\n```qmd\n{existing}\n```\n"
         ),
         summary="Coder: точечная правка report.qmd",
@@ -376,7 +399,7 @@ async def apply_coding_edit(
     state.artifacts.report = str(path)
 
     try:
-        _render_and_store(state, workspace)
+        await _render_with_data_check(state, workspace, allow_data_fix=False)
     except RenderError as exc:
         return _fail_render(state, exc)
 

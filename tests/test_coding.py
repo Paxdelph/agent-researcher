@@ -87,6 +87,7 @@ format: html
     with (
         patch("app.orchestration.coding.run_agent", new=AsyncMock(side_effect=fake_run_agent)),
         patch("app.orchestration.coding.render_quarto", side_effect=fake_render),
+        patch("app.orchestration.coding.report_data_warnings", return_value=[]),
         patch("app.orchestration.coding.screenshot_html", return_value=[]),
         patch("app.orchestration.coding.get_settings") as gs,
         patch("app.orchestration.coding.brief_block", return_value="RQ"),
@@ -151,6 +152,7 @@ async def test_apply_coding_edit_surgical(tmp_path: Path):
     with (
         patch("app.orchestration.coding.run_agent", new=AsyncMock(side_effect=fake_run_agent)),
         patch("app.orchestration.coding.render_quarto", side_effect=fake_render),
+        patch("app.orchestration.coding.report_data_warnings", return_value=[]),
         patch("app.orchestration.coding.get_settings") as gs,
     ):
         class R:

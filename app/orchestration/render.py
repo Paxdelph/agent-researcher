@@ -136,3 +136,20 @@ def html_excerpt(html_path: Path, limit: int = 12000) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + "\n\n<!-- truncated -->\n"
+
+
+# Markers from Coder defensive blocks when CSV schema / funnel steps mismatch.
+_REPORT_DATA_WARNING_MARKERS: tuple[str, ...] = (
+    "не найден или не содержит обязательных полей",
+    "Недостаточно данных для построения воронки",
+    "Недостаточно шагов воронки",
+    "Слишком мало дней в данных",
+)
+
+
+def report_data_warnings(html_path: Path) -> list[str]:
+    """Return human-readable warnings if rendered HTML looks like a no-data shell."""
+    if not html_path.is_file():
+        return ["HTML-файл отчёта не найден"]
+    text = html_path.read_text(encoding="utf-8", errors="replace")
+    return [marker for marker in _REPORT_DATA_WARNING_MARKERS if marker in text]

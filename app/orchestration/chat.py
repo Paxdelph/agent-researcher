@@ -7,6 +7,7 @@ from pathlib import Path
 from app.agents.runner import run_agent, write_workspace_text
 from app.config import get_settings
 from app.models import ChatAction, ChatDecision, ChatMessage, ResearchState, Stage, Status
+from app.orchestration.context import current_artifact_preview
 from app.orchestration.coding import (
     apply_coding_edit,
     approve_coding,
@@ -182,6 +183,7 @@ async def interpret_message(state: ResearchState, message: str) -> ChatDecision:
     plan_note = "есть" if state.artifacts.analysis_plan else "нет"
     skel_note = "есть" if state.artifacts.skeleton else "нет"
     report_note = "есть" if state.artifacts.report else "нет"
+    artifact_preview = current_artifact_preview(state, Path(state.workspace))
     result = await run_agent(
         state=state,
         agent_name="lead",
@@ -200,7 +202,8 @@ async def interpret_message(state: ResearchState, message: str) -> ChatDecision:
             f"## Plan on disk\n{plan_note}\n"
             f"## Skeleton on disk\n{skel_note}\n"
             f"## Report on disk\n{report_note}\n"
-            f"## Brief\n{brief_block(state)}\n"
+            f"## Brief\n{brief_block(state, Path(state.workspace))}\n"
+            f"## Current artifact preview\n{artifact_preview}\n"
             f"## Recent chat\n{_history_block(state)}\n"
             f"## Latest user message\n{message}\n"
         ),

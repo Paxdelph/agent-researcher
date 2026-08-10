@@ -1,4 +1,4 @@
-"""Data review: profile CSVs → Lead compares to plan → optional plan adjust."""
+"""Data review: profile CSVs → Lead compares to plan → Analyst validates → optional plan adjust."""
 
 from __future__ import annotations
 
@@ -8,8 +8,14 @@ from app.agents.runner import read_workspace_text, run_agent, write_workspace_te
 from app.config import get_settings
 from app.data_profile import profile_data_dir
 from app.models import ChatMessage, ResearchState, Stage, Status
-from app.orchestration.parse import strip_markdown_fence
+from app.orchestration.parse import parse_json_object, strip_markdown_fence
 from app.orchestration.planning import brief_block
+
+_VERDICT_RANK = {"ok": 0, "adjusted": 1, "blocked": 2}
+
+
+def _stricter_verdict(a: str, b: str) -> str:
+    return a if _VERDICT_RANK.get(a, 0) >= _VERDICT_RANK.get(b, 0) else b
 
 
 async def run_data_review(state: ResearchState, workspace: Path) -> ResearchState:
@@ -60,20 +66,64 @@ async def run_data_review(state: ResearchState, workspace: Path) -> ResearchStat
         ],
     )
 
-    from app.orchestration.parse import parse_json_object
-
     try:
         data = parse_json_object(result.text)
     except ValueError:
         data = {
-            "reply": result.text.strip()[:1500] or "Проверил данные.",
-            "verdict": "ok",
+            "reply": (
+                result.text.strip()[:1500]
+                or "Не удалось разобрать ответ Lead по сверке данных."
+            ),
+            "verdict": "blocked",
             "plan_artifact": None,
         }
 
     reply = str(data.get("reply") or "Проверил данные.").strip()
     verdict = str(data.get("verdict") or "ok").strip().lower()
+    if verdict not in _VERDICT_RANK:
+        verdict = "blocked"
     plan_artifact = data.get("plan_artifact")
+
+    analyst_result = await run_agent(
+        state=state,
+        agent_name="analyst",
+        stage=Stage.DATA_REVIEW,
+        user_message=(
+            "Проверь решение Lead по сверке плана с данными. "
+            "Lead не должен утверждать несуществующие поля или срезы.\n"
+            "Верни JSON:\n"
+            '{"agree": true|false, "concerns": "...", '
+            '"verdict": null|"ok"|"adjusted"|"blocked"}\n'
+            "verdict=null если полностью согласен с Lead.\n\n"
+            f"## Lead reply\n{reply}\n\n"
+            f"## Lead verdict\n{verdict}\n\n"
+            f"## Brief\n{brief}\n\n"
+            f"## Current analysis plan\n{plan or '(нет плана)'}\n\n"
+            f"## Data profile\n{profile_md}\n"
+        ),
+        summary="Analyst: валидация сверки данных",
+        json_mode=True,
+        skill_override=[
+            "data_review",
+            "research_design",
+            "statistics",
+            "product_analytics",
+        ],
+    )
+
+    try:
+        analyst_data = parse_json_object(analyst_result.text)
+    except ValueError:
+        analyst_data = {"agree": True, "concerns": "", "verdict": None}
+
+    analyst_verdict = analyst_data.get("verdict")
+    if analyst_verdict is not None:
+        analyst_verdict = str(analyst_verdict).strip().lower()
+        if analyst_verdict in _VERDICT_RANK:
+            verdict = _stricter_verdict(verdict, analyst_verdict)
+    concerns = str(analyst_data.get("concerns") or "").strip()
+    if concerns and not bool(analyst_data.get("agree", True)):
+        reply = f"{reply}\n\nAnalyst: {concerns}".strip()
 
     if verdict == "adjusted" and plan_artifact:
         plan_text = strip_markdown_fence(str(plan_artifact).strip())
@@ -103,6 +153,11 @@ async def run_data_review(state: ResearchState, workspace: Path) -> ResearchStat
         reply = (
             (reply or "Данные согласованы с планом.")
             + " Дальше: «сделай скелет» или «едем дальше»."
+        )
+    elif verdict == "blocked":
+        reply = (
+            (reply or "Данных недостаточно для продолжения.")
+            + " Дособерите CSV или уточните план."
         )
     state.chat.append(ChatMessage(role="assistant", content=reply))
     return state

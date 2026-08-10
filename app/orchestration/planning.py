@@ -68,6 +68,12 @@ async def run_planning(state: ResearchState, workspace: Path) -> ResearchState:
             f"## Lead draft\n{state.lead_draft}\n"
         ),
         summary="Analyst: критика черновика",
+        skill_override=[
+            "planning_pipeline",
+            "research_design",
+            "statistics",
+            "product_analytics",
+        ],
     )
     state.analyst_critique = critique.text.strip()
 
@@ -122,6 +128,13 @@ async def apply_plan_edit(
     if not existing:
         raise RuntimeError("analysis-plan.md ещё нет — сначала нужно спланировать")
 
+    arts = ""
+    review = read_workspace_text(workspace, settings.research.data_review_file).strip()
+    if review:
+        arts = (
+            f"\n## Data review (`{settings.research.data_review_file}`)\n{review}\n"
+        )
+
     result = await run_agent(
         state=state,
         agent_name="lead",
@@ -133,6 +146,7 @@ async def apply_plan_edit(
             f"## User message\n{user_message}\n"
             + (f"\n## Reply hint\n{reply_hint}\n" if reply_hint else "")
             + f"\n## Brief\n{brief_block(state, workspace)}"
+            + arts
         ),
         summary="Lead: правка плана",
         json_mode=True,
@@ -141,6 +155,7 @@ async def apply_plan_edit(
             "artifact_edit",
             "planning_pipeline",
             "research_design",
+            "product_analytics",
         ],
     )
     decision = parse_chat_decision(result.text)
