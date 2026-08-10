@@ -11,10 +11,10 @@
 Нужно только:
 
 - **Docker** + **Docker Compose** (v2)
-- Аккаунты и ключи API:
-  - `OPENAI_API_KEY`
-  - `ANTHROPIC_API_KEY`  
-  (оба: в `config.yaml` разные агенты ходят в разные провайдеры)
+- API-ключ(и) под провайдеров из `config.yaml`:
+  - если агенты на OpenAI — `OPENAI_API_KEY`
+  - если на Anthropic — `ANTHROPIC_API_KEY`
+  - оба нужны только при смешанном конфиге (как в `config.example.yaml`); можно прописать всем агентам один `provider` и держать один ключ
 - Свободный порт **8787**
 
 R, Quarto, pandoc, Chromium и R-пакеты для knit уже внутри образа — отдельно ставить не нужно.
