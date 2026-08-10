@@ -2,8 +2,6 @@
 
 Локальный хелпер продуктового аналитика: от brief до Quarto-отчёта (R + plotly) с визуальным design review.
 
-Пайплайн в чате: **план → сверка данных → скелет → отчёт (`report.qmd` → HTML) → правки**.
-
 ## Требования
 
 ### Рекомендуемый путь — Docker
@@ -39,38 +37,84 @@ R, Quarto, pandoc, Chromium и R-пакеты для knit уже внутри о
 git clone git@github.com:Paxdelph/agent-researcher.git
 cd agent-researcher
 
-cp .env.example .env          # вписать ключи
+cp .env.example .env
 cp config.example.yaml config.yaml
 
-# опционально: команда из любой research-папки
 mkdir -p ~/.local/bin
 ln -sfn "$PWD/scripts/agent-research" ~/.local/bin/agent-research
-
-cd researches/example
-agent-research --build
 ```
 
-UI: http://127.0.0.1:8787
-
-Флаги launcher’а: `--build`, `--reset`, `-d` / `--detach`.
-
-Или без symlink:
-
-```bash
-RESEARCH_PATH=./researches/example docker compose up --build
-```
-
-Общий контекст компании: `researches/context.md` (для `researches/example`). Override: `CONTEXT_FILE=/path/to/context.md`.
+Дальше — настройка и запуск по шагам ниже. UI: http://127.0.0.1:8787  
+Флаги: `--build`, `--reset`, `-d` / `--detach`.
 
 ## Как пользоваться
 
-1. Brief в чате → «сделай план» (Lead → Analyst → Lead) → `analysis-plan.md`.
-2. Положи CSV в `data/` → «проверь данные» → `data-review.md`.
-3. «Сделай скелет» (Lead → Analyst → Storyteller → BI Analyst) → `skeleton.md`.
-4. «Собери отчёт» — Coder пишет `report.qmd`, Quarto рендерит HTML, Designer один раунд визуального ревью.
-5. Правки в чате правят `.qmd` точечно; полный пересбор — по явной просьбе («с нуля» / «переделай»).
+### 1. Ключи
 
-Формат отчётов: Quarto extension **`researcher-html`** (тема и семантика `.finding` / `.kpi` / …).
+В корне проекта открой `.env` и пропиши ключ(и) провайдера(ов), которые реально указаны в конфиге.
+
+### 2. Модели и провайдеры
+
+В `config.yaml` у каждой роли (`lead`, `analyst`, `storyteller`, `bi_analyst`, `coder`, `designer`) задай `provider` и `model`. Можно всем поставить одного провайдера — тогда нужен один ключ в `.env`.
+
+### 3. Контекст компании
+
+Отредактируй `researches/context.md` — общий фон продукта/компании для всех рисерчей (метрики, воронки, нюансы данных, что обычно не делаем). Brief конкретной задачи пишешь уже в чате.
+
+### 4. Папка рисерча
+
+```bash
+mkdir -p researches/my-research/data
+cd researches/my-research
+agent-research --build
+```
+
+`data/` пока может быть пустой — CSV положишь, когда Lead скажет, какие выгрузки нужны.
+
+Для демо можно сразу: `cd researches/example && agent-research --build`.
+
+### 5. Brief и план
+
+В UI опиши задачу (что случилось, какой вопрос, период, ограничения). Попроси сделать план.
+
+Lead с Analyst соберут `analysis-plan.md`: RQ, дизайн, метрики, **какие данные нужны**. По этому списку сходи в БД / склад, выгрузи CSV в `researches/my-research/data/`.
+
+### 6. Дальше по флоу в чате
+
+| Ты говоришь (смысл) | Что происходит |
+|---------------------|----------------|
+| «проверь данные» | Сверка CSV с планом → `data-review.md` |
+| «сделай скелет» | Структура будущего отчёта → `skeleton.md` |
+| «собери отчёт» | Coder пишет `report.qmd`, рендер в HTML, Designer смотрит вёрстку |
+| правки в чате | Точечные правки артефактов / `.qmd`; полный пересбор — только если явно («с нуля», «переделай») |
+
+Не нужно помнить имена файлов наизусть: вкладки в UI показывают актуальные артефакты.
+
+## Артефакты
+
+| Файл | Зачем |
+|------|--------|
+| `researches/context.md` | Общий контекст компании (на все рисерчи) |
+| `analysis-plan.md` | План: вопрос, дизайн, метрики, список нужных данных |
+| `data/*.csv` | Твои выгрузки; агенты только читают, в БД сами не ходят |
+| `data-review.md` | Вердикт: хватает ли полей/строк под план, где дыры |
+| `skeleton.md` | Каркас отчёта: секции, тезисы, какие графики |
+| `report.qmd` | Исходник отчёта (Quarto + R + plotly) |
+| `report.html` | Собранный HTML для чтения / шаринга |
+| `design-review.md` | Замечания Designer по визуалу HTML |
+
+Формат отчётов: extension **`researcher-html`** (единая тема, блоки вроде `.finding` / `.kpi`).
+
+## Роли
+
+| Роль | Что делает |
+|------|------------|
+| **Lead** | Ведёт рисерч в чате: план, правки артефактов, «что дальше», список данных |
+| **Analyst** | Жёстко ревьюит дизайн плана: дыры, оверклеймы, статистика, product-sense |
+| **Storyteller** | Собирает нарратив скелета: порядок секций, формулировки выводов |
+| **BI Analyst** | Проход по визуализациям в скелете: типы графиков, кодировки для Coder |
+| **Coder** | Пишет и правит `report.qmd` на R/plotly под скелет и данные |
+| **Designer** | Смотрит отрендеренный HTML (скриншоты) и просит точечные фиксы вёрстки |
 
 ## Локально без Docker
 
@@ -78,8 +122,6 @@ RESEARCH_PATH=./researches/example docker compose up --build
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-
-# R-пакеты (нужен установленный R):
 Rscript docker/install_r_packages.R
 
 cp .env.example .env
@@ -89,25 +131,19 @@ export WORKSPACE_PATH=./researches/example
 export CONTEXT_PATH=./researches/context.md
 export STATE_DIR=./.app-state
 export AGENT_RESEARCHER_CONFIG=./config.yaml
-# ключи уже в .env — подхватите через set -a; source .env; set +a
+set -a && source .env && set +a
 
 uvicorn app.main:app --host 0.0.0.0 --port 8787 --reload
 ```
 
-## Структура
+## Структура репозитория
 
 | Путь | Назначение |
 |------|------------|
 | `app/` | FastAPI UI, оркестрация, провайдеры LLM |
 | `app/skills/` | инструкции агентам |
-| `app/prompts/` | короткие роли (Lead, Analyst, Coder, …) |
+| `app/prompts/` | короткие роли |
 | `quarto/_extensions/researcher/` | формат `researcher-html` |
-| `researches/` | папки рисерчей + общий `context.md` |
+| `researches/` | рисерчи + общий `context.md` |
 | `scripts/agent-research` | запуск compose из папки анализа |
-| `config.example.yaml` | шаблон конфига (локальный `config.yaml` в git не кладётся) |
-
-## Папка рисерча
-
-Любая директория (launcher создаст `data/` при необходимости). Рядом уровнем выше — общий `context.md`.
-
-Типичные артефакты: `analysis-plan.md`, `data-review.md`, `skeleton.md`, `report.qmd`, `report.html`, `design-review.md`.
+| `config.example.yaml` | шаблон (локальный `config.yaml` в git не кладётся) |
