@@ -27,7 +27,7 @@ ln -sfn "$PWD/scripts/agent-research" ~/.local/bin/agent-research
 ```
 
 Дальше — настройка и запуск по шагам ниже. UI: http://127.0.0.1:8787  
-Флаги: `--build`, `--reset`, `-d` / `--detach`.
+Флаги: `--build`, `--reset` (обнулить чат/токены/логи этого рисерча), `-d` / `--detach`.
 
 ## Как пользоваться
 

@@ -3,11 +3,26 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 
 from app.config import get_settings
 from app.models import ResearchState, Stage, Status
+
+
+def workspace_identity(workspace: str | Path | None = None) -> str:
+    """Stable id for the mounted research folder.
+
+    Inside Docker the bind mount is always ``/workspace``; use host path from
+    the launcher when present so a shared STATE_DIR still resets on switch.
+    """
+    host = os.environ.get("RESEARCH_HOST_PATH", "").strip()
+    if host:
+        return str(Path(host).expanduser())
+    if workspace is not None:
+        return str(Path(workspace).resolve())
+    return str(Path(get_settings().workspace.path).resolve())
 
 
 class StateStore:
@@ -19,15 +34,24 @@ class StateStore:
         self.log_path = self.state_dir / "calls.jsonl"
 
     def new_run(self, workspace: str) -> ResearchState:
+        self.clear_logs()
         state = ResearchState(
             run_id=str(uuid.uuid4()),
-            workspace=str(workspace),
+            workspace=workspace_identity(workspace),
             stage=Stage.BRIEF,
             status=Status.IDLE,
             status_text="Введите задачу и начните планирование в чате",
         )
         self.save(state)
         return state
+
+    def clear_logs(self) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        if self.log_path.exists():
+            self.log_path.unlink()
+        tmp = self.log_path.with_suffix(".tmp")
+        if tmp.exists():
+            tmp.unlink()
 
     def load(self) -> ResearchState | None:
         if not self.state_path.exists():
@@ -87,13 +111,13 @@ class StateStore:
 
     def ensure_for_workspace(self, workspace: str) -> ResearchState:
         state = self.load()
-        workspace = str(Path(workspace).resolve())
+        identity = workspace_identity(workspace)
         if state is None:
             return self.new_run(workspace)
-        if Path(state.workspace).resolve() != Path(workspace).resolve():
+        if state.workspace != identity:
             state.recovery_message = (
                 f"Сохранённый прогон был для {state.workspace}, "
-                f"сейчас смонтирован {workspace}. Начинаем новый прогон."
+                f"сейчас смонтирован {identity}. Начинаем новый прогон."
             )
             return self.new_run(workspace)
         state.recovery_message = None

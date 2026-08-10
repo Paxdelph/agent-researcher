@@ -59,7 +59,7 @@ class AgentConfig(BaseModel):
 class AppConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8787
-    state_dir: str = "/app-state"
+    state_dir: str = "/workspace/.agent-researcher"
     store_full_prompts: bool = False
 
 

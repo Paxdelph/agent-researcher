@@ -37,7 +37,7 @@ Shared company context lives one level above the research
 
 Options:
   --build       Rebuild Docker image
-  --reset       Clear saved run state before start
+  --reset       Clear this research folder's run state (chat, tokens, logs, brief)
   -d, --detach  Run containers in background
   -h, --help    Show help
 
@@ -120,16 +120,15 @@ echo "Workspace: $RESEARCH_PATH"
 echo "Context:   $CONTEXT_FILE"
 echo "UI:        http://127.0.0.1:8787"
 
+STATE_DIR_HOST="$RESEARCH_PATH/.agent-researcher"
+
 if [[ "$RESET" -eq 1 ]]; then
-  echo "Reset:     clearing run state volume"
-  docker compose down
-  docker volume rm \
-    "${COMPOSE_PROJECT_NAME:-$(basename "$ROOT")}_agent_researcher_state" \
-    agent_researcher_state \
-    2>/dev/null || true
+  echo "Reset:     clearing $STATE_DIR_HOST"
+  rm -rf "$STATE_DIR_HOST"
 fi
 
-compose_args=(up)
+# Always recreate so RESEARCH_PATH remount picks up the right folder/state
+compose_args=(up --force-recreate)
 if [[ "$DETACH" -eq 1 ]]; then
   compose_args+=(-d)
 fi
