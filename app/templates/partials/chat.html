@@ -1,0 +1,48 @@
+<section id="lead-chat"
+         class="panel chat-panel"
+         hx-get="/partials/chat"
+         hx-trigger="refresh"
+         hx-swap="outerHTML">
+  <div class="chat-header">
+    <h2>Чат</h2>
+    <span class="muted chat-header-hint">правки и «едем дальше» — здесь</span>
+  </div>
+
+  <div class="chat-log" id="chat-log">
+    {% if state.chat %}
+      {% for m in state.chat %}
+      <div class="chat-row chat-row-{{ m.role }}">
+        <div class="chat-msg chat-{{ m.role }}">
+          <div class="chat-who">
+            {% if m.role == 'user' %}Вы
+            {% elif m.role == 'system' %}Статус
+            {% else %}Lead{% endif %}
+          </div>
+          <div class="chat-body">{{ m.content }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="muted chat-empty">
+        Сохраните brief и напишите «сделай план», или вставьте задачу сюда.
+        Потом: точечные правки или «едем дальше».
+      </p>
+    {% endif %}
+  </div>
+
+  <form class="chat-form" method="post" action="/chat"
+        hx-post="/chat"
+        hx-target="#lead-chat"
+        hx-swap="outerHTML"
+        hx-disabled-elt="button, textarea">
+    <textarea name="message" rows="5"
+              placeholder="Сделай план / исправь … / проверь данные / едем дальше&#10;Enter — отправить, Shift+Enter — новая строка"
+              {% if running %}disabled{% endif %}></textarea>
+    <button type="submit" class="send-btn" title="Отправить" aria-label="Отправить"
+            {% if running %}disabled{% endif %}>
+      <svg class="send-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+        <path fill="currentColor" d="M3.4 20.4 20.85 12.9c.7-.3.7-1.3 0-1.6L3.4 3.8c-.6-.28-1.25.27-1.1.9l1.55 6.05c.1.4.42.7.83.76L14 12 4.68 12.5c-.41.06-.73.36-.83.76L2.3 19.5c-.15.63.5 1.18 1.1.9Z"/>
+      </svg>
+    </button>
+  </form>
+</section>

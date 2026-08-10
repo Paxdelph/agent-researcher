@@ -1,0 +1,69 @@
+<main id="app-body" class="layout-wrap">
+  {% if state.recovery_message %}
+  <div class="banner warn">{{ state.recovery_message }}</div>
+  {% endif %}
+  {% if state.error %}
+  <div class="banner error">{{ state.error }}</div>
+  {% endif %}
+
+  <div class="layout">
+  <aside class="layout-left">
+    <section class="panel brief" id="brief-panel">
+      <header class="brief-header">
+        <h2>Brief</h2>
+        <div class="brief-tabs" role="tablist" aria-label="Brief">
+          <button type="button" class="brief-tab is-active" role="tab"
+                  data-brief-tab="question" aria-selected="true">Вопрос</button>
+          <button type="button" class="brief-tab" role="tab"
+                  data-brief-tab="context" aria-selected="false">Контекст</button>
+        </div>
+      </header>
+      <form class="brief-form" method="post" action="/brief">
+        <div class="brief-pane is-active" data-brief-pane="question" role="tabpanel">
+          <textarea id="research_question" name="research_question" class="brief-input"
+                    rows="8"
+                    placeholder="Какой вопрос должен закрыть этот рисерч?"
+                    {% if running %}readonly{% endif %}>{{ state.research_question }}</textarea>
+        </div>
+        <div class="brief-pane" data-brief-pane="context" role="tabpanel" hidden>
+          <textarea id="business_context" name="business_context" class="brief-input"
+                    rows="8"
+                    placeholder="Продукт, аудитория, ограничения"
+                    {% if running %}readonly{% endif %}>{{ state.business_context }}</textarea>
+        </div>
+        {% if not running %}
+        <div class="brief-actions">
+          <button type="submit" class="secondary brief-save">Сохранить</button>
+        </div>
+        {% endif %}
+      </form>
+    </section>
+
+    <section class="panel progress">
+      <h2>Этапы</h2>
+      <ol class="steps">
+        {% for step in progress %}
+        <li class="step step-{{ step.status }}">{{ step.label }}</li>
+        {% endfor %}
+      </ol>
+      <p class="muted status-line">{{ state.status_text }}</p>
+      {% if state.active_role %}
+      <p class="muted">Агент: <code>{{ state.active_role }}</code></p>
+      {% endif %}
+      {% if running %}
+      <p class="muted work-hint">Агент работает — чат и лог обновляются по ходу.</p>
+      {% endif %}
+    </section>
+
+    {% include "partials/call_log.html" %}
+  </aside>
+
+  <section class="layout-center">
+    {% include "partials/preview.html" %}
+  </section>
+
+  <aside class="layout-right">
+    {% include "partials/chat.html" %}
+  </aside>
+  </div>
+</main>

@@ -1,0 +1,35 @@
+<section id="call-log" class="panel call-log-panel"
+         hx-get="/partials/call_log"
+         hx-trigger="refresh"
+         hx-swap="outerHTML">
+  <div class="call-log-header">
+    <h2>Лог</h2>
+    <span class="muted">{{ call_log|length }}</span>
+  </div>
+  <div class="call-log-list">
+    {% if call_log %}
+      {% for entry in call_log %}
+      <article class="call-item call-{{ entry.status }}"
+               title="{{ entry.summary or '' }}{% if entry.error %} — {{ entry.error }}{% endif %}">
+        <div class="call-line">
+          <strong class="call-role">{{ entry.role }}</strong>
+          <span class="muted">·</span>
+          <code class="call-model">{{ entry.model }}</code>
+          {% if entry.status == 'running' %}
+          <span class="call-status call-status-running">в процессе</span>
+          {% elif entry.status == 'failed' %}
+          <span class="call-status call-status-failed">ошибка</span>
+          {% else %}
+          <span class="call-tok">{{ entry.input_tokens + entry.output_tokens }}</span>
+          {% endif %}
+        </div>
+        {% if entry.summary %}
+        <div class="call-summary">{{ entry.summary }}</div>
+        {% endif %}
+      </article>
+      {% endfor %}
+    {% else %}
+      <p class="muted call-empty">Нет вызовов</p>
+    {% endif %}
+  </div>
+</section>

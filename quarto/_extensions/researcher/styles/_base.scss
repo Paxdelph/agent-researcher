@@ -1,0 +1,184 @@
+/* Base report chrome: type, grid, tables, TOC, plotly width.
+   Loaded via report.scss into Quarto theme rules. */
+
+#quarto-document-content,
+main.content {
+  max-width: 52rem;
+  margin-inline: auto;
+  padding-bottom: 3rem;
+}
+
+body {
+  overflow-x: hidden;
+  color: var(--rr-ink);
+  background: var(--rr-bg);
+  font-family: var(--rr-font-body);
+  font-size: var(--rr-font-size);
+  line-height: var(--rr-line-height);
+}
+
+/* Quarto chrome — keep page/canvas white so plotly (white paper) doesn't float on gray */
+#quarto-content,
+.page-columns,
+.page-rows-contents,
+.page-layout-article,
+#quarto-document-content,
+main.content,
+.quarto-title-block,
+.cell,
+.cell-output,
+.cell-output-display,
+.quarto-figure,
+figure {
+  background: transparent;
+}
+
+#quarto-margin-sidebar,
+.sidebar.margin-sidebar {
+  background: var(--rr-bg);
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--rr-font-display);
+  color: var(--rr-ink);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+h1.title {
+  font-size: 1.85rem;
+  margin-bottom: 0.35rem;
+}
+
+.subtitle {
+  color: var(--rr-muted);
+  font-size: 1.05rem;
+  margin-top: 0;
+}
+
+h2 {
+  font-size: 1.35rem;
+  margin-top: 2.25rem;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid color-mix(in srgb, var(--rr-accent) 28%, var(--rr-border));
+}
+
+h3 {
+  font-size: 1.1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.55rem;
+}
+
+p {
+  margin: 0.65rem 0;
+}
+
+a {
+  color: var(--rr-accent);
+}
+
+/* Tables */
+table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  margin: 1rem 0 1.25rem;
+}
+
+thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--rr-ink);
+  border-bottom: 2px solid var(--rr-border-strong);
+  padding: 0.45rem 0.6rem;
+  background: var(--rr-surface);
+}
+
+tbody td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--rr-border);
+  vertical-align: top;
+}
+
+tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--rr-surface) 70%, transparent);
+}
+
+.quarto-figure,
+figure,
+.cell-output-display {
+  overflow: visible !important;
+  max-width: 100%;
+}
+
+.cell-output-display {
+  margin-top: 1.5rem !important;
+  margin-bottom: 1.5rem !important;
+}
+
+h2 + .cell,
+h2 + .cell > .cell-output-display,
+h3 + .cell,
+h3 + .cell > .cell-output-display {
+  margin-top: 1.25rem !important;
+}
+
+/* Plotly / htmlwidgets: full content column, no scrollbars, same white as page */
+.html-widget,
+.plotly.html-widget,
+.js-plotly-plot {
+  width: 100% !important;
+  max-width: 100% !important;
+  display: block;
+  background: transparent !important;
+}
+
+.js-plotly-plot .plot-container,
+.js-plotly-plot .svg-container,
+.js-plotly-plot .main-svg,
+.js-plotly-plot .svg-container .main-svg {
+  background: transparent !important;
+}
+
+.js-plotly-plot .plot-container,
+.js-plotly-plot .svg-container {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.js-plotly-plot .main-svg {
+  overflow: visible;
+}
+
+/* TOC */
+#quarto-margin-sidebar,
+.sidebar.margin-sidebar {
+  font-size: 0.88rem;
+}
+
+#TOC a,
+.toc-actions a,
+nav[role="doc-toc"] a {
+  color: var(--rr-muted);
+  text-decoration: none;
+}
+
+#TOC a:hover,
+nav[role="doc-toc"] a:hover {
+  color: var(--rr-accent);
+}
+
+#TOC ul,
+nav[role="doc-toc"] ul {
+  padding-left: 0.9rem;
+}
+
+code {
+  font-size: 0.9em;
+  background: var(--rr-surface);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}

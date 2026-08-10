@@ -1,0 +1,108 @@
+/* Semantic report blocks — Coder emits classes; CSS owns look. */
+
+.section-head {
+  margin: 2rem 0 1rem;
+  padding: 0.75rem 0 0.5rem;
+  border-top: 1px solid var(--rr-border);
+}
+
+.section-head > :first-child {
+  margin-top: 0;
+}
+
+.kpi,
+.finding,
+.warning,
+.recommendation {
+  margin: 1.15rem 0 1.35rem;
+  padding: 0.85rem 1rem 0.9rem 1.05rem;
+  border-radius: var(--rr-radius);
+  background: var(--rr-surface);
+  border: 1px solid var(--rr-border);
+  border-left-width: 4px;
+}
+
+.kpi {
+  border-left-color: var(--rr-accent);
+}
+
+.finding {
+  border-left-color: var(--rr-finding);
+  background: color-mix(in srgb, var(--rr-finding) 6%, var(--rr-bg));
+}
+
+.warning {
+  border-left-color: var(--rr-warning);
+  background: color-mix(in srgb, var(--rr-warning) 7%, var(--rr-bg));
+}
+
+.recommendation {
+  border-left-color: var(--rr-recommend);
+  background: color-mix(in srgb, var(--rr-recommend) 6%, var(--rr-bg));
+}
+
+.kpi > :first-child,
+.finding > :first-child,
+.warning > :first-child,
+.recommendation > :first-child {
+  margin-top: 0;
+}
+
+.kpi > :last-child,
+.finding > :last-child,
+.warning > :last-child,
+.recommendation > :last-child {
+  margin-bottom: 0;
+}
+
+.kpi h3,
+.kpi h4,
+.finding h3,
+.finding h4,
+.warning h3,
+.warning h4,
+.recommendation h3,
+.recommendation h4 {
+  margin-top: 0;
+  margin-bottom: 0.4rem;
+  font-size: 1rem;
+  border: 0;
+  padding: 0;
+}
+
+.kpi .value,
+.kpi-value {
+  font-size: 1.45rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: var(--rr-ink);
+  line-height: 1.2;
+}
+
+.kpi .delta,
+.kpi-delta {
+  font-size: 0.92rem;
+  color: var(--rr-muted);
+  margin-top: 0.2rem;
+}
+
+.kpi .delta.is-neg,
+.kpi-delta.is-neg {
+  color: var(--rr-neg);
+}
+
+.kpi .delta.is-pos,
+.kpi-delta.is-pos {
+  color: var(--rr-pos);
+}
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0 1.35rem;
+}
+
+.kpis > .kpi {
+  margin: 0;
+}

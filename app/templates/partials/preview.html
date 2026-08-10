@@ -1,0 +1,98 @@
+<section id="artifact-preview" class="panel preview-panel"
+         data-artifact="{{ artifact_id }}"
+         hx-get="/partials/preview?artifact={{ artifact_id }}"
+         hx-trigger="refresh"
+         hx-swap="outerHTML">
+  <div class="preview-header">
+    <div class="preview-header-left">
+      <h2>Артефакты</h2>
+      <code class="muted">{{ preview.name }}</code>
+      {% if preview_saved %}
+      <span class="preview-saved">сохранено</span>
+      {% endif %}
+    </div>
+    <div class="preview-actions">
+      {% if can_render_report and preview.id == 'report' and not running and not edit_mode %}
+      <button type="button" class="secondary"
+              id="render-report-btn"
+              hx-post="/render-report"
+              hx-vals='{"artifact": "{{ artifact_id }}"}'
+              hx-target="#artifact-preview"
+              hx-swap="outerHTML"
+              hx-disabled-elt="this">
+        Перерендерить HTML
+      </button>
+      {% endif %}
+      {% if preview.exists and preview.editable and not running %}
+        {% if edit_mode %}
+        <button type="button" class="secondary"
+                hx-get="/partials/preview?artifact={{ artifact_id }}"
+                hx-target="#artifact-preview"
+                hx-swap="outerHTML">
+          Отмена
+        </button>
+        {% else %}
+        <button type="button" class="secondary"
+                hx-get="/partials/preview?artifact={{ artifact_id }}&edit=1"
+                hx-target="#artifact-preview"
+                hx-swap="outerHTML">
+          Редактировать
+        </button>
+        {% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <nav class="artifact-tabs" aria-label="Артефакты">
+    {% for tab in tabs %}
+    <button type="button"
+            class="artifact-tab{% if tab.active %} is-active{% endif %}{% if not tab.exists %} is-missing{% endif %}"
+            data-artifact="{{ tab.id }}"
+            title="{{ tab.file }}"
+            hx-get="/partials/preview?artifact={{ tab.id }}"
+            hx-target="#artifact-preview"
+            hx-swap="outerHTML"
+            {% if edit_mode and tab.active %}disabled{% endif %}>
+      {{ tab.label }}
+      {% if not tab.exists %}<span class="tab-dot" aria-hidden="true"></span>{% endif %}
+    </button>
+    {% endfor %}
+  </nav>
+
+  {% if render_message %}
+  <p class="preview-banner {% if render_ok %}preview-banner-ok{% else %}preview-banner-error{% endif %}">
+    {{ render_message }}
+  </p>
+  {% endif %}
+
+  <div class="preview-body" id="preview-scroll">
+    {% if edit_mode and preview.exists and preview.editable %}
+    <form class="artifact-editor"
+          hx-post="/artifact"
+          hx-target="#artifact-preview"
+          hx-swap="outerHTML">
+      <input type="hidden" name="name" value="{{ preview.name }}">
+      <input type="hidden" name="artifact" value="{{ artifact_id }}">
+      <textarea name="content" spellcheck="false">{{ preview.text }}</textarea>
+      <div class="artifact-editor-actions">
+        <button type="submit" class="primary">Сохранить</button>
+        <button type="button" class="secondary"
+                hx-get="/partials/preview?artifact={{ artifact_id }}"
+                hx-target="#artifact-preview"
+                hx-swap="outerHTML">
+          Отмена
+        </button>
+      </div>
+    </form>
+    {% elif preview.exists and preview.kind == 'iframe' and preview.iframe_src %}
+      <iframe class="report-frame" title="{{ preview.name }}"
+              src="{{ preview.iframe_src }}"></iframe>
+    {% elif preview.exists and preview.html %}
+      <article class="md-body">{{ preview.html | safe }}</article>
+    {% elif preview.error %}
+      <p class="muted">{{ preview.error }}</p>
+    {% else %}
+      <p class="muted">Нет превью</p>
+    {% endif %}
+  </div>
+</section>

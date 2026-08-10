@@ -1,0 +1,114 @@
+app:
+  host: 0.0.0.0
+  port: 8787
+  state_dir: /app-state
+  store_full_prompts: false
+
+workspace:
+  path: /workspace
+  data_dir: data
+  context_path: /company/context.md
+
+research:
+  plan_file: analysis-plan.md
+  data_review_file: data-review.md
+  skeleton_file: skeleton.md
+  report_file: report.qmd
+  report_html_file: report.html
+  design_review_file: design-review.md
+  artifact_language: ru
+  artifacts:
+    - id: context
+      file: context.md
+      label: Контекст
+      editable: true
+    - id: plan
+      file: analysis-plan.md
+      label: План
+      editable: true
+    - id: data_review
+      file: data-review.md
+      label: Сверка
+      editable: false
+    - id: skeleton
+      file: skeleton.md
+      label: Скелет
+      editable: true
+    - id: report
+      file: report.qmd
+      label: Quarto
+      editable: true
+    - id: report_html
+      file: report.html
+      label: HTML
+      editable: false
+
+agents:
+  lead:
+    enabled: true
+    provider: openai
+    model: gpt-5.6-sol
+    prompt: prompts/lead.md
+    skills:
+      - planning_pipeline
+      - research_design
+      - product_analytics
+      - chat_control
+      - artifact_edit
+      - report_skeleton
+
+  analyst:
+    enabled: true
+    provider: anthropic
+    model: claude-opus-5
+    prompt: prompts/analyst.md
+    skills:
+      - planning_pipeline
+      - research_design
+      - statistics
+      - product_analytics
+      - report_skeleton
+
+  storyteller:
+    enabled: true
+    provider: anthropic
+    model: claude-sonnet-5
+    prompt: prompts/storyteller.md
+    skills:
+      - storytelling
+      - report_skeleton
+      - product_analytics
+
+  bi_analyst:
+    enabled: true
+    provider: openai
+    model: gpt-5.6-sol
+    prompt: prompts/bi_analyst.md
+    skills:
+      - viz_craft
+      - report_skeleton
+      - product_analytics
+
+  coder:
+    enabled: true
+    provider: anthropic
+    model: claude-sonnet-5
+    prompt: prompts/coder.md
+    skills:
+      - quarto_coding
+      - viz_craft
+      - product_analytics
+
+  designer:
+    enabled: true
+    provider: anthropic
+    model: claude-sonnet-5
+    prompt: prompts/designer.md
+    skills:
+      - design_review
+
+limits:
+  # 0 = без лимита
+  max_total_tokens: 0
+  max_single_call_input_tokens: 0
+  default_timeout_seconds: 600

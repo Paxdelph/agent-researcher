@@ -1,0 +1,20 @@
+title: Researcher HTML
+author: agent-researcher
+version: 0.1.0
+quarto-required: ">=1.4.0"
+contributes:
+  formats:
+    html:
+      toc: true
+      toc-depth: 2
+      code-fold: true
+      code-summary: "Показать код"
+      code-overflow: wrap
+      embed-resources: true
+      fig-width: 8
+      fig-height: 4.5
+      tbl-cap-location: top
+      lang: ru
+      theme:
+        - default
+        - styles/report.scss

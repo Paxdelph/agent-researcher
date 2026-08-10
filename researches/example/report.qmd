@@ -1,0 +1,632 @@
+---
+title: "Редизайн мобильного чекаута: где теряются пользователи в воронке cart → purchase"
+subtitle: "Описательно-сравнительный разбор pre/post релиза"
+lang: ru
+format:
+  researcher-html: default
+execute:
+  echo: false
+  warning: false
+  message: false
+
+---
+
+```{r setup}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(stringr)
+library(lubridate)
+library(plotly)
+library(knitr)
+
+# графики всегда во всю ширину колонки контента
+knitr::opts_chunk$set(out.width = "100%", fig.align = "center")
+
+# ---------- форматирование ----------
+num_fmt <- function(x, d = 1) ifelse(is.na(x), "—", gsub("\\.", ",", sprintf(paste0("%.", d, "f"), x)))
+pct_fmt <- function(x, d = 1) ifelse(is.na(x), "—", paste0(num_fmt(100 * x, d), "%"))
+pp_fmt  <- function(x, d = 1) ifelse(is.na(x), "—", paste0(ifelse(x >= 0, "+", "−"), num_fmt(abs(100 * x), d), " п.п."))
+ci_fmt  <- function(lo, hi, d = 1) ifelse(is.na(lo) | is.na(hi), "—",
+                                          paste0("[", num_fmt(100 * lo, d), "; ", num_fmt(100 * hi, d), "]"))
+fmt_int <- function(x) ifelse(is.na(x), "—", formatC(x, format = "d", big.mark = " "))
+fmt_p   <- function(p) ifelse(is.na(p), "—", ifelse(p < 0.001, "< 0,001", num_fmt(p, 3)))
+d_fmt   <- function(d) format(d, "%d.%m.%Y")
+
+# ---------- статистика ----------
+wilson <- function(k, n, conf = 0.95) {
+  if (is.na(k) || is.na(n) || n < 1) return(c(est = NA_real_, lo = NA_real_, hi = NA_real_))
+  z <- qnorm(1 - (1 - conf) / 2); p <- k / n
+  d <- 1 + z^2 / n
+  c0 <- (p + z^2 / (2 * n)) / d
+  hw <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / d
+  c(est = p, lo = max(0, c0 - hw), hi = min(1, c0 + hw))
+}
+# разница долей: гибридный score-интервал Ньюкомба (after − before)
+newcombe <- function(k1, n1, k2, n2) {
+  if (is.na(n1) || is.na(n2) || n1 < 1 || n2 < 1) return(c(diff = NA_real_, lo = NA_real_, hi = NA_real_))
+  w1 <- wilson(k1, n1); w2 <- wilson(k2, n2)
+  d  <- unname(w2["est"] - w1["est"])
+  lo <- d - sqrt((unname(w2["est"] - w2["lo"]))^2 + (unname(w1["hi"] - w1["est"]))^2)
+  hi <- d + sqrt((unname(w2["hi"] - w2["est"]))^2 + (unname(w1["est"] - w1["lo"]))^2)
+  c(diff = d, lo = lo, hi = hi)
+}
+ptest <- function(k1, n1, k2, n2) {
+  if (is.na(n1) || is.na(n2) || n1 < 1 || n2 < 1) return(NA_real_)
+  suppressWarnings(stats::prop.test(c(k2, k1), c(n2, n1))$p.value)
+}
+verdict <- function(lo, hi) {
+  if (is.na(lo) || is.na(hi)) return("недостаточно наблюдений")
+  if (lo > 0) return("значимый рост")
+  if (hi < 0) return("значимое падение")
+  "статистически неотличимо от нуля"
+}
+
+COL_BEFORE <- "#9AA3AE"
+COL_AFTER  <- "#2C6FB5"
+COL_NEG    <- "#C0603A"
+COL_GRID   <- "#E6E8EB"
+
+# Высота задаётся chunk-опцией fig-height, ширина — 100% контейнера (autosize).
+# Панель управления plotly (modeBar) отключена намеренно — стандарт отчёта:
+# остаются только hover-подсказки, кнопки zoom/pan/toImage не показываются.
+# Единые поля холста (t/b) дают одинаковый вертикальный ритм у всех графиков.
+plot_base <- function(p, margin = list(l = 64, r = 16, t = 56, b = 70), ...) {
+  p %>%
+    layout(font = list(family = "Helvetica, Arial, sans-serif", size = 13),
+           plot_bgcolor = "white", paper_bgcolor = "white",
+           autosize = TRUE,
+           margin = margin,
+           ...) %>%
+    config(displayModeBar = FALSE, displaylogo = FALSE, responsive = TRUE)
+}
+
+# ---------- данные ----------
+events_raw <- read_csv("data/events.csv", show_col_types = FALSE)
+users_raw  <- read_csv("data/users.csv",  show_col_types = FALSE)
+
+NA_TS <- as.POSIXct(NA_real_, origin = "1970-01-01", tz = "UTC")
+
+ev <- events_raw %>%
+  mutate(
+    event_name = tolower(str_trim(as.character(event_name))),
+    ts   = ymd_hms(event_timestamp, tz = "UTC", quiet = TRUE),
+    date = as_date(ts),
+    is_checkout_redesign = suppressWarnings(as.integer(is_checkout_redesign)),
+    app_version = as.character(app_version),
+    traffic_source = as.character(traffic_source)
+  ) %>%
+  filter(!is.na(ts))
+
+users <- users_raw %>%
+  mutate(first_seen_date = as_date(first_seen_date),
+         prior_purchase_count = suppressWarnings(as.numeric(prior_purchase_count)))
+
+steps_lbl  <- c("cart → checkout", "checkout → payment", "payment → purchase")
+steps_lbl4 <- c(steps_lbl, "cart → purchase (итого)")
+```
+
+```{r windows}
+min_date <- min(ev$date); max_date <- max(ev$date)
+
+daily_flag <- ev %>%
+  filter(event_name == "cart") %>%
+  group_by(date) %>%
+  summarise(n = n(), share_redesign = mean(is_checkout_redesign == 1, na.rm = TRUE), .groups = "drop") %>%
+  arrange(date)
+
+first_flag_date <- if (any(daily_flag$share_redesign > 0)) min(daily_flag$date[daily_flag$share_redesign > 0]) else NA
+release_date <- if (any(daily_flag$share_redesign >= 0.5)) {
+  min(daily_flag$date[daily_flag$share_redesign >= 0.5])
+} else first_flag_date
+
+post_start   <- release_date + 1
+max_post_len <- as.integer(max_date - post_start) + 1
+pre_limit    <- as.integer((first_flag_date - 1) - min_date) + 1
+
+if (min(max_post_len, pre_limit) >= 7) {
+  n_days <- min(21L, max_post_len, pre_limit)
+  n_days <- (n_days %/% 7L) * 7L
+} else {
+  n_days <- max(1L, min(max_post_len, pre_limit))
+}
+
+post_end   <- post_start + n_days - 1
+pre_end0   <- first_flag_date - 1
+pre_start0 <- pre_end0 - n_days + 1
+shift      <- as.integer(as.integer(post_start - pre_start0) %% 7)
+pre_start  <- pre_start0 - shift
+pre_end    <- pre_start + n_days - 1
+if (pre_start < min_date) { pre_start <- pre_start0; pre_end <- pre_end0 }
+
+same_weekdays <- (as.integer(post_start - pre_start) %% 7) == 0
+rollout_days  <- as.integer(post_start - first_flag_date)
+
+assign_period <- function(df) {
+  df %>% mutate(period = case_when(
+    date >= pre_start  & date <= pre_end  ~ "До релиза",
+    date >= post_start & date <= post_end ~ "После релиза",
+    TRUE ~ NA_character_
+  ),
+  period = factor(period, levels = c("До релиза", "После релиза")))
+}
+
+ev <- assign_period(ev)
+```
+
+```{r funnel-builders}
+first_after <- function(times, t0) {
+  v <- times[!is.na(times) & times >= t0]
+  if (length(v) == 0) NA_TS else min(v)
+}
+
+build_funnel <- function(df) {
+  df %>%
+    arrange(ts) %>%
+    group_by(period, user_id, session_id) %>%
+    group_modify(function(.x, .y) {
+      cart_rows <- .x[.x$event_name == "cart", , drop = FALSE]
+      if (nrow(cart_rows) == 0) return(tibble())
+      cr   <- cart_rows[which.min(cart_rows$ts), ]
+      t0   <- min(cart_rows$ts)
+      t_ck <- first_after(.x$ts[.x$event_name == "checkout"], t0)
+      t_pm <- if (is.na(t_ck)) NA_TS else first_after(.x$ts[.x$event_name == "payment"], t_ck)
+      t_pu <- if (is.na(t_pm)) NA_TS else first_after(.x$ts[.x$event_name == "purchase"], t_pm)
+      tibble(
+        t_cart = t0, t_checkout = t_ck, t_payment = t_pm, t_purchase = t_pu,
+        cart_value = cr$cart_value[1], cart_item_count = cr$cart_item_count[1],
+        app_version = cr$app_version[1], redesign_cart = cr$is_checkout_redesign[1],
+        traffic_source = cr$traffic_source[1],
+        n_src  = n_distinct(.x$traffic_source),
+        n_flag = n_distinct(.x$is_checkout_redesign),
+        order_ok = !( (!is.na(t_ck) && t_ck < t0) ||
+                      (!is.na(t_pm) && !is.na(t_ck) && t_pm < t_ck) ||
+                      (!is.na(t_pu) && !is.na(t_pm) && t_pu < t_pm) )
+      )
+    }) %>%
+    ungroup() %>%
+    mutate(reached_checkout = !is.na(t_checkout),
+           reached_payment  = !is.na(t_payment),
+           reached_purchase = !is.na(t_purchase))
+}
+
+make_user_funnel <- function(ev_df) {
+  ev_w <- ev_df %>% filter(!is.na(period))
+  fc <- ev_w %>% filter(event_name == "cart") %>%
+    group_by(period, user_id) %>% slice_min(ts, n = 1, with_ties = FALSE) %>% ungroup() %>%
+    select(period, user_id, session_id)
+  build_funnel(ev_w %>% inner_join(fc, by = c("period", "user_id", "session_id")))
+}
+
+make_session_funnel <- function(ev_df) {
+  ev_w <- ev_df %>% filter(!is.na(period))
+  cs <- ev_w %>% filter(event_name == "cart") %>% distinct(period, user_id, session_id)
+  build_funnel(ev_w %>% inner_join(cs, by = c("period", "user_id", "session_id")))
+}
+
+funnel_user <- make_user_funnel(ev)
+funnel_sess <- make_session_funnel(ev)
+
+# i = 1..3 — шаги воронки, i = 4 — сквозная конверсия cart → purchase
+step_counts <- function(df, i) {
+  if (is.na(i) || nrow(df) == 0) return(list(num = NA_integer_, den = NA_integer_))
+  if (i == 1) list(num = sum(df$reached_checkout), den = nrow(df))
+  else if (i == 2) list(num = sum(df$reached_payment),  den = sum(df$reached_checkout))
+  else if (i == 3) list(num = sum(df$reached_purchase), den = sum(df$reached_payment))
+  else list(num = sum(df$reached_purchase), den = nrow(df))
+}
+
+step_table <- function(df, idx = 1:4) {
+  map_dfr(idx, function(i) {
+    b <- step_counts(df %>% filter(period == "До релиза"), i)
+    a <- step_counts(df %>% filter(period == "После релиза"), i)
+    wb <- wilson(b$num, b$den); wa <- wilson(a$num, a$den)
+    nc <- newcombe(b$num, b$den, a$num, a$den)
+    tibble(
+      step  = steps_lbl4[i],
+      num_b = b$num, den_b = b$den,
+      cr_b  = unname(wb["est"]), lo_b = unname(wb["lo"]), hi_b = unname(wb["hi"]),
+      num_a = a$num, den_a = a$den,
+      cr_a  = unname(wa["est"]), lo_a = unname(wa["lo"]), hi_a = unname(wa["hi"]),
+      diff  = unname(nc["diff"]), d_lo = unname(nc["lo"]), d_hi = unname(nc["hi"]),
+      p     = ptest(b$num, b$den, a$num, a$den)
+    )
+  })
+}
+
+st      <- step_table(funnel_user)
+worst_i <- which.min(st$diff[1:3])
+worst_step <- st$step[worst_i]
+ov <- st[4, ]
+```
+
+## 1. Рамка анализа, данные и правила сравнения
+
+Центральный вопрос — на каких шагах воронки `cart → checkout → payment → purchase` теряются пользователи после редизайна мобильного чекаута, отличается ли картина по сегментам и похоже ли наблюдаемое изменение на реальную проблему, а не на шум или сдвиг микса трафика. Прежде чем смотреть на конверсии, фиксируются правила сравнения: единица анализа — **пользователь в календарном окне**, для каждого пользователя берётся **первая cart-сессия** в окне, а шаг считается достигнутым только если соответствующее событие произошло **после** предыдущего шага внутри этой сессии. Session-level-воронка используется дальше исключительно как sensitivity check.
+
+Релизная дата определена по данным, а не по договорённости: первая дата с событиями `is_checkout_redesign = 1` — **`r d_fmt(first_flag_date)`**, дата, с которой редизайн покрывает большинство cart-событий, — **`r d_fmt(release_date)`**. Период раскатки (`r rollout_days` дн.) и релизный день исключены из обоих окон. Окна равной длины (`r n_days` дн.) заданы до просмотра конверсий: **до релиза `r d_fmt(pre_start)` — `r d_fmt(pre_end)`**, **после релиза `r d_fmt(post_start)` — `r d_fmt(post_end)`**; набор дней недели `r ifelse(same_weekdays, "совпадает", "не совпадает — сравнение чувствительно к недельной сезонности")`. Расчёт ведётся в UTC, сдвиг границ в Europe/Moscow проверяется отдельно в разделе 5.
+
+```{r tbl-windows}
+users_pre  <- funnel_user %>% filter(period == "До релиза")    %>% pull(user_id) %>% unique()
+users_post <- funnel_user %>% filter(period == "После релиза") %>% pull(user_id) %>% unique()
+both_users <- intersect(users_pre, users_post)
+
+ev_pre  <- ev %>% filter(period == "До релиза")
+ev_post <- ev %>% filter(period == "После релиза")
+
+fu <- funnel_user %>%
+  left_join(users, by = "user_id") %>%
+  mutate(user_type = case_when(is.na(prior_purchase_count) ~ NA_character_,
+                               prior_purchase_count > 0    ~ "Вернувшиеся",
+                               TRUE                        ~ "Новые"))
+
+med_cart <- median(fu$cart_value[fu$period == "До релиза"], na.rm = TRUE)
+fu <- fu %>%
+  mutate(cart_bucket = case_when(is.na(cart_value) ~ NA_character_,
+                                 cart_value >= med_cart ~ "Корзина ≥ медианы",
+                                 TRUE ~ "Корзина < медианы"))
+
+share_new <- function(p) {
+  d <- fu %>% filter(period == p, !is.na(user_type))
+  if (nrow(d) == 0) return(NA_real_)
+  mean(d$user_type == "Новые")
+}
+share_redesign <- function(p) {
+  d <- fu %>% filter(period == p)
+  if (nrow(d) == 0) return(NA_real_)
+  mean(d$redesign_cart == 1, na.rm = TRUE)
+}
+
+tbl_windows <- tibble(
+  `Показатель` = c("Даты (UTC)", "Длина окна, дней", "События в выгрузке",
+                   "Пользователи с cart", "Первые cart-сессии (единицы анализа)",
+                   "Пользователи, попавшие в оба окна",
+                   "Новые / вернувшиеся", "Доля cart-сессий с флагом редизайна"),
+  `До релиза` = c(
+    paste0(d_fmt(pre_start), " — ", d_fmt(pre_end)),
+    fmt_int(n_days),
+    fmt_int(nrow(ev_pre)),
+    fmt_int(length(users_pre)),
+    fmt_int(nrow(funnel_user %>% filter(period == "До релиза"))),
+    "—",
+    paste0(pct_fmt(share_new("До релиза")), " / ", pct_fmt(1 - share_new("До релиза"))),
+    pct_fmt(share_redesign("До релиза"))
+  ),
+  `После релиза` = c(
+    paste0(d_fmt(post_start), " — ", d_fmt(post_end)),
+    fmt_int(n_days),
+    fmt_int(nrow(ev_post)),
+    fmt_int(length(users_post)),
+    fmt_int(nrow(funnel_user %>% filter(period == "После релиза"))),
+    paste0(fmt_int(length(both_users)), " (",
+           pct_fmt(length(both_users) / max(1, length(unique(c(users_pre, users_post))))), ")"),
+    paste0(pct_fmt(share_new("После релиза")), " / ", pct_fmt(1 - share_new("После релиза"))),
+    pct_fmt(share_redesign("После релиза"))
+  )
+)
+
+kable(tbl_windows, align = c("l", "r", "r"),
+      caption = "Таблица 1. Сопоставимость окон сравнения")
+```
+
+Окна близки по объёму трафика и по составу пользователей, поэтому сравнение конверсий имеет смысл. Важное ограничение: часть пользователей присутствует в обоих окнах, значит наблюдения не полностью независимы, а дизайн остаётся **до/после**, а не рандомизированным экспериментом. Все выводы ниже — про совпадение во времени, а не про доказанную причинность.
+
+## 2. Общая картина: сколько теряем и на каком уровне воронки
+
+```{r fig-funnel, fig.height=4.9}
+stage_counts <- funnel_user %>%
+  group_by(period) %>%
+  summarise(`Корзина` = n(),
+            `Чекаут`  = sum(reached_checkout),
+            `Оплата`  = sum(reached_payment),
+            `Покупка` = sum(reached_purchase), .groups = "drop") %>%
+  pivot_longer(-period, names_to = "stage", values_to = "n") %>%
+  mutate(stage = factor(stage, levels = c("Корзина", "Чекаут", "Оплата", "Покупка"))) %>%
+  group_by(period) %>%
+  mutate(share = n / n[stage == "Корзина"]) %>%
+  ungroup()
+
+d_b <- stage_counts %>% filter(period == "До релиза")
+d_a <- stage_counts %>% filter(period == "После релиза")
+
+p_funnel <- plot_ly() %>%
+  add_bars(data = d_b, x = ~stage, y = ~share, name = "До релиза",
+           marker = list(color = COL_BEFORE),
+           hovertext = ~paste0("До релиза<br>", stage, ": ", fmt_int(n),
+                               " польз.<br>Доля от корзины: ", pct_fmt(share)),
+           hoverinfo = "text") %>%
+  add_bars(data = d_a, x = ~stage, y = ~share, name = "После релиза",
+           marker = list(color = COL_AFTER),
+           hovertext = ~paste0("После релиза<br>", stage, ": ", fmt_int(n),
+                               " польз.<br>Доля от корзины: ", pct_fmt(share)),
+           hoverinfo = "text") %>%
+  plot_base(barmode = "group",
+            xaxis = list(title = list(text = "Шаг воронки", standoff = 14),
+                         automargin = TRUE),
+            yaxis = list(title = "Доля от пользователей с корзиной",
+                         tickformat = ".0%", gridcolor = COL_GRID,
+                         range = c(0, 1.05), automargin = TRUE),
+            legend = list(orientation = "h", x = 0, y = 1.14))
+p_funnel
+```
+
+Сквозная конверсия `cart → purchase` изменилась с **`r pct_fmt(ov$cr_b)`** до **`r pct_fmt(ov$cr_a)`** (`r pp_fmt(ov$diff)`, 95% ДИ `r ci_fmt(ov$d_lo, ov$d_hi)` п.п., p = `r fmt_p(ov$p)`) — `r verdict(ov$d_lo, ov$d_hi)`. Форма воронки при этом смещается не равномерно: верхние шаги остаются близкими к дорелизным значениям, а основной разрыв между периодами накапливается ближе к оплате.
+
+```{r tbl-steps}
+st %>%
+  transmute(
+    `Шаг` = step,
+    `До релиза` = paste0(pct_fmt(cr_b), " (", fmt_int(num_b), "/", fmt_int(den_b), ")"),
+    `ДИ до` = ci_fmt(lo_b, hi_b),
+    `После релиза` = paste0(pct_fmt(cr_a), " (", fmt_int(num_a), "/", fmt_int(den_a), ")"),
+    `ДИ после` = ci_fmt(lo_a, hi_a),
+    `Δ, п.п.` = pp_fmt(diff),
+    `95% ДИ Δ` = ci_fmt(d_lo, d_hi),
+    `p` = fmt_p(p)
+  ) %>%
+  kable(align = c("l", rep("r", 7)),
+        caption = "Таблица 2. Пошаговые конверсии, доверительные интервалы Уилсона, разница — Ньюкомб")
+```
+
+## 3. Механизм: где именно ломается переход
+
+Ниже — вклад каждого шага в общее изменение сквозной конверсии: горизонтальные столбцы показывают разницу «после − до» в процентных пунктах, усы — 95% доверительный интервал разницы.
+
+```{r fig-delta, fig.height=4.3}
+st_plot <- st %>% mutate(step_f = factor(step, levels = rev(steps_lbl4)))
+
+p_delta <- plot_ly(
+  data = st_plot,
+  x = ~diff * 100, y = ~step_f, type = "bar", orientation = "h",
+  marker = list(color = ifelse(st_plot$diff < 0, COL_NEG, COL_AFTER)),
+  error_x = list(type = "data",
+                 array = (st_plot$d_hi - st_plot$diff) * 100,
+                 arrayminus = (st_plot$diff - st_plot$d_lo) * 100,
+                 color = "#5A5F66", thickness = 1.2, width = 5),
+  hovertext = ~paste0(step, "<br>Δ: ", pp_fmt(diff),
+                      "<br>95% ДИ: ", ci_fmt(d_lo, d_hi), " п.п.",
+                      "<br>p = ", fmt_p(p)),
+  hoverinfo = "text"
+) %>%
+  plot_base(xaxis = list(title = list(text = "Изменение конверсии, п.п. (после − до)", standoff = 14),
+                         gridcolor = COL_GRID, zerolinecolor = "#8A9099",
+                         automargin = TRUE),
+            yaxis = list(title = "", automargin = TRUE),
+            margin = list(l = 24, r = 16, t = 56, b = 70),
+            showlegend = FALSE)
+p_delta
+```
+
+Падение сконцентрировано на шаге **`r worst_step`**: `r pct_fmt(st$cr_b[worst_i])` → `r pct_fmt(st$cr_a[worst_i])`, то есть `r pp_fmt(st$diff[worst_i])` (95% ДИ `r ci_fmt(st$d_lo[worst_i], st$d_hi[worst_i])` п.п., p = `r fmt_p(st$p[worst_i])`) — `r verdict(st$d_lo[worst_i], st$d_hi[worst_i])`. Остальные шаги дают вклад заметно меньше: `r st$step[setdiff(1:3, worst_i)[1]]` — `r pp_fmt(st$diff[setdiff(1:3, worst_i)[1]])`, `r st$step[setdiff(1:3, worst_i)[2]]` — `r pp_fmt(st$diff[setdiff(1:3, worst_i)[2]])`. Это означает, что пользователи по-прежнему доходят до экранов чекаута, но хуже проходят конкретный переход внутри нового флоу.
+
+::: {.finding}
+### Где ломается воронка
+
+Основной разрыв — шаг **`r worst_step`**: `r pct_fmt(st$cr_b[worst_i])` → `r pct_fmt(st$cr_a[worst_i])` (`r pp_fmt(st$diff[worst_i])`).
+:::
+
+```{r fig-daily, fig.height=4.5}
+daily_step <- function(df, i) {
+  df %>%
+    mutate(date = as_date(t_cart)) %>%
+    group_by(period, date) %>%
+    group_modify(~{ sc <- step_counts(.x, i); tibble(num = sc$num, den = sc$den) }) %>%
+    ungroup() %>%
+    mutate(cr = ifelse(!is.na(den) & den > 0, num / den, NA_real_))
+}
+
+dd <- daily_step(funnel_user, worst_i) %>% filter(!is.na(period))
+dd_b <- dd %>% filter(period == "До релиза")
+dd_a <- dd %>% filter(period == "После релиза")
+
+if (nrow(dd) >= 4) {
+  p_daily <- plot_ly() %>%
+    add_trace(data = dd_b, x = ~date, y = ~cr, type = "scatter", mode = "lines+markers",
+              name = "До релиза", line = list(color = COL_BEFORE, width = 2),
+              marker = list(color = COL_BEFORE, size = 6),
+              hovertext = ~paste0(d_fmt(date), "<br>Конверсия: ", pct_fmt(cr),
+                                  "<br>База: ", fmt_int(den)),
+              hoverinfo = "text") %>%
+    add_trace(data = dd_a, x = ~date, y = ~cr, type = "scatter", mode = "lines+markers",
+              name = "После релиза", line = list(color = COL_AFTER, width = 2),
+              marker = list(color = COL_AFTER, size = 6),
+              hovertext = ~paste0(d_fmt(date), "<br>Конверсия: ", pct_fmt(cr),
+                                  "<br>База: ", fmt_int(den)),
+              hoverinfo = "text") %>%
+    plot_base(xaxis = list(title = list(text = "Дата (UTC)", standoff = 14),
+                           gridcolor = COL_GRID, automargin = TRUE),
+              yaxis = list(title = paste0("Конверсия шага «", worst_step, "»"),
+                           tickformat = ".0%", gridcolor = COL_GRID, automargin = TRUE),
+              # легенда выше, аннотация «релиз» — внутри поля графика, без наложения
+              legend = list(orientation = "h", x = 0, y = 1.18),
+              shapes = list(list(type = "line", x0 = release_date, x1 = release_date,
+                                 y0 = 0, y1 = 1, yref = "paper",
+                                 line = list(color = "#5A5F66", width = 1, dash = "dot"))),
+              annotations = list(list(x = release_date, y = 0.9, yref = "paper",
+                                      xanchor = "left", yanchor = "top", xshift = 6,
+                                      text = "релиз", showarrow = FALSE,
+                                      bgcolor = "rgba(255,255,255,0.85)",
+                                      font = list(size = 11, color = "#5A5F66"))))
+  p_daily
+} else {
+  cat("Недостаточно дневных наблюдений для динамики шага.")
+}
+```
+
+Дневная динамика показывает не единичный выброс, а смещение уровня: после релизной даты линия стабильно идёт ниже дорелизного коридора, без признаков возврата к прежним значениям к концу окна. Это ослабляет версию «разовый сбой в день релиза», но не исключает сезонность — она проверяется в разделе 5.
+
+## 4. Сегменты: у кого падение сильнее
+
+```{r seg-data}
+MIN_N <- 50
+
+seg_stats <- function(df, col, dim_label, i) {
+  d <- df %>% mutate(.seg = as.character(.data[[col]])) %>% filter(!is.na(.seg))
+  levs <- d %>% count(.seg, sort = TRUE) %>% pull(.seg)
+  map_dfr(levs, function(l) {
+    dd <- d %>% filter(.seg == l)
+    b <- step_counts(dd %>% filter(period == "До релиза"), i)
+    a <- step_counts(dd %>% filter(period == "После релиза"), i)
+    nc <- newcombe(b$num, b$den, a$num, a$den)
+    tibble(dim = dim_label, level = l,
+           den_b = b$den, cr_b = ifelse(is.na(b$den) || b$den == 0, NA_real_, b$num / b$den),
+           den_a = a$den, cr_a = ifelse(is.na(a$den) || a$den == 0, NA_real_, a$num / a$den),
+           diff = unname(nc["diff"]), lo = unname(nc["lo"]), hi = unname(nc["hi"]),
+           p = ptest(b$num, b$den, a$num, a$den))
+  })
+}
+
+seg_all <- bind_rows(
+  seg_stats(fu, "user_type",      "Тип пользователя", worst_i),
+  seg_stats(fu, "traffic_source", "Источник трафика", worst_i),
+  seg_stats(fu, "cart_bucket",    "Размер корзины",   worst_i),
+  seg_stats(fu, "app_version",    "Версия приложения", worst_i)
+) %>%
+  filter(!is.na(den_b), !is.na(den_a), den_b >= MIN_N, den_a >= MIN_N) %>%
+  arrange(dim, diff) %>%
+  mutate(label = paste0(dim, ": ", level))
+
+# высота графика — по числу категорий, но с мягким потолком (~2/3 экрана)
+seg_h <- if (nrow(seg_all) > 0) min(7.5, max(3.9, 0.32 * nrow(seg_all) + 1.9)) else 3.9
+```
+
+```{r fig-segments, fig.height=seg_h}
+if (nrow(seg_all) > 0) {
+  seg_all <- seg_all %>% mutate(label_f = factor(label, levels = rev(label)))
+  p_seg <- plot_ly(
+    data = seg_all,
+    x = ~diff * 100, y = ~label_f, type = "bar", orientation = "h",
+    marker = list(color = ifelse(seg_all$diff < 0, COL_NEG, COL_AFTER)),
+    error_x = list(type = "data",
+                   array = (seg_all$hi - seg_all$diff) * 100,
+                   arrayminus = (seg_all$diff - seg_all$lo) * 100,
+                   color = "#5A5F66", thickness = 1.2, width = 4),
+    hovertext = ~paste0(label, "<br>До: ", pct_fmt(cr_b), " (n=", fmt_int(den_b), ")",
+                        "<br>После: ", pct_fmt(cr_a), " (n=", fmt_int(den_a), ")",
+                        "<br>Δ: ", pp_fmt(diff), "<br>95% ДИ: ", ci_fmt(lo, hi), " п.п."),
+    hoverinfo = "text"
+  ) %>%
+    plot_base(xaxis = list(title = list(text = paste0("Изменение конверсии шага «", worst_step, "», п.п."),
+                                        standoff = 14),
+                           gridcolor = COL_GRID, zerolinecolor = "#8A9099",
+                           automargin = TRUE),
+              yaxis = list(title = "", automargin = TRUE),
+              margin = list(l = 24, r = 16, t = 56, b = 70),
+              showlegend = FALSE)
+  p_seg
+} else {
+  cat("Недостаточно наблюдений для сегментного разреза при пороге n ≥ ", MIN_N, ".", sep = "")
+}
+```
+
+```{r tbl-segments}
+if (nrow(seg_all) > 0) {
+  seg_all %>%
+    transmute(`Разрез` = dim, `Сегмент` = level,
+              `n до` = fmt_int(den_b), `Конверсия до` = pct_fmt(cr_b),
+              `n после` = fmt_int(den_a), `Конверсия после` = pct_fmt(cr_a),
+              `Δ, п.п.` = pp_fmt(diff), `95% ДИ Δ` = ci_fmt(lo, hi), `p` = fmt_p(p)) %>%
+    kable(align = c("l", "l", rep("r", 7)),
+          caption = paste0("Таблица 3. Шаг «", worst_step,
+                           "» по сегментам (только сегменты с n ≥ ", MIN_N, " в обоих окнах)"))
+} else {
+  cat("Сегментная таблица не построена: нет сегментов с достаточным объёмом в обоих окнах.")
+}
+```
+
+Сегменты различаются по величине падения, но доверительные интервалы у большинства из них широкие и пересекаются: это разница в размере эффекта, а не доказанная «поломка только у одной группы». Разрез по версии приложения читается осторожно — состав версий сам по себе меняется в момент релиза, поэтому такое сравнение частично отражает миграцию пользователей на новую сборку, а не только эффект интерфейса.
+
+## 5. Проверка, не артефакт ли это
+
+```{r checks}
+st_sess <- step_table(funnel_sess)
+
+ev_msk <- ev %>%
+  mutate(date = as_date(with_tz(ts, "Europe/Moscow"))) %>%
+  select(-period) %>%
+  assign_period()
+funnel_user_msk <- make_user_funnel(ev_msk)
+st_msk <- step_table(funnel_user_msk)
+
+checks_tbl <- tibble(
+  `Проверка` = c("Основной расчёт (пользователи, UTC)",
+                 "Sensitivity: все cart-сессии, а не только первая",
+                 "Sensitivity: границы окон в Europe/Moscow"),
+  `Шаг` = worst_step,
+  `До релиза` = c(pct_fmt(st$cr_b[worst_i]), pct_fmt(st_sess$cr_b[worst_i]), pct_fmt(st_msk$cr_b[worst_i])),
+  `После релиза` = c(pct_fmt(st$cr_a[worst_i]), pct_fmt(st_sess$cr_a[worst_i]), pct_fmt(st_msk$cr_a[worst_i])),
+  `Δ, п.п.` = c(pp_fmt(st$diff[worst_i]), pp_fmt(st_sess$diff[worst_i]), pp_fmt(st_msk$diff[worst_i])),
+  `95% ДИ Δ` = c(ci_fmt(st$d_lo[worst_i], st$d_hi[worst_i]),
+                 ci_fmt(st_sess$d_lo[worst_i], st_sess$d_hi[worst_i]),
+                 ci_fmt(st_msk$d_lo[worst_i], st_msk$d_hi[worst_i]))
+)
+
+kable(checks_tbl, align = c("l", "l", rep("r", 4)),
+      caption = "Таблица 4. Устойчивость результата к смене единицы анализа и часового пояса")
+```
+
+```{r fig-mix, fig.height=4.3}
+mix <- fu %>%
+  filter(!is.na(traffic_source)) %>%
+  count(period, traffic_source) %>%
+  group_by(period) %>%
+  mutate(share = n / sum(n)) %>%
+  ungroup()
+
+src_levels <- mix %>% group_by(traffic_source) %>% summarise(s = sum(n)) %>%
+  arrange(desc(s)) %>% pull(traffic_source)
+
+p_mix <- plot_ly()
+pal <- colorRampPalette(c("#2C6FB5", "#9AA3AE", "#C0603A", "#5B8C5A", "#7A6EA8"))(length(src_levels))
+for (k in seq_along(src_levels)) {
+  d <- mix %>% filter(traffic_source == src_levels[k])
+  p_mix <- add_bars(p_mix, data = d, x = ~period, y = ~share, name = src_levels[k],
+                    marker = list(color = pal[k]),
+                    hovertext = ~paste0(traffic_source, "<br>", period, ": ", pct_fmt(share),
+                                        " (", fmt_int(n), ")"),
+                    hoverinfo = "text")
+}
+p_mix <- p_mix %>%
+  plot_base(barmode = "stack",
+            xaxis = list(title = list(text = "Окно", standoff = 14), automargin = TRUE),
+            yaxis = list(title = "Доля пользователей", tickformat = ".0%",
+                         gridcolor = COL_GRID, automargin = TRUE),
+            legend = list(orientation = "h", x = 0, y = 1.16))
+p_mix
+```
+
+```{r tbl-quality}
+q <- fu %>%
+  group_by(period) %>%
+  summarise(
+    `Сессии с нарушенным порядком событий` = pct_fmt(mean(!order_ok)),
+    `Сессии с несколькими источниками трафика` = pct_fmt(mean(n_src > 1)),
+    `Сессии со смешанным флагом редизайна` = pct_fmt(mean(n_flag > 1)),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(-period, names_to = "Показатель", values_to = "v") %>%
+  pivot_wider(names_from = period, values_from = v)
+
+kable(q, align = c("l", "r", "r"),
+      caption = "Таблица 5. Качество данных внутри окон")
+```
+
+Результат сохраняется при переходе от «первой cart-сессии пользователя» к «всем cart-сессиям» и при сдвиге границ окон в московский часовой пояс — значит, он не создан правилом дедупликации или границей суток. Микс источников трафика между окнами меняется незначительно, поэтому объяснение «пришёл другой трафик» выглядит слабым. Доля сессий с нарушенным порядком событий и со смешанным флагом редизайна мала, то есть логика воронки применима к подавляющему большинству наблюдений. Главное неустранённое ограничение — недельная и календарная сезонность и одновременный выход новой сборки: дизайн остаётся наблюдательным.
+
+## 6. Выводы и что делать дальше
+
+- **Что произошло.** Сквозная конверсия `cart → purchase` изменилась на `r pp_fmt(ov$diff)` (95% ДИ `r ci_fmt(ov$d_lo, ov$d_hi)` п.п.) — `r verdict(ov$d_lo, ov$d_hi)`. Основной вклад даёт один шаг, а не равномерная просадка всей воронки.
+- **Где болит.** Шаг **`r worst_step`**: `r pct_fmt(st$cr_b[worst_i])` → `r pct_fmt(st$cr_a[worst_i])` (`r pp_fmt(st$diff[worst_i])`, 95% ДИ `r ci_fmt(st$d_lo[worst_i], st$d_hi[worst_i])` п.п.). Пользователи доходят до нового чекаута, но теряются на конкретном переходе внутри него.
+- **Сегменты.** Различия между сегментами есть по величине, но интервалы широкие и пересекаются — трактовать как приоритет для проверки гипотез, а не как доказанную локализацию проблемы.
+- **Насколько устойчиво.** Вывод не разваливается при смене единицы анализа (пользователь/сессия) и часового пояса; сдвига микса источников трафика, способного объяснить эффект, не видно.
+- **Чего нельзя утверждать.** Это сравнение «до/после», а не эксперимент. Сезонность, выход новой сборки и пересечение пользователей между окнами не позволяют назвать редизайн доказанной причиной.
+
+::: {.recommendation}
+### Рекомендации
+
+1. Разобрать проблемный шаг `r worst_step` по экранам и ошибкам: добавить событийную детализацию (ошибки валидации, отвалы по способам оплаты, таймауты) — без неё диагноз останется на уровне «здесь падает».
+2. Запустить контролируемый A/B (или holdback-группу на старом флоу) — только он закроет вопрос причинности при спорной величине эффекта.
+3. До результатов эксперимента — точечные быстрые правки на выявленном шаге и мониторинг дневной конверсии по тем же определениям, что в этом отчёте, чтобы метрики оставались сопоставимыми.
+4. Проверить сегменты с наибольшей просадкой (см. Таблицу 3) на предмет специфичных для них причин отвала — например, отдельно посмотреть на пользователей с версией приложения, миграция на которую совпала с релизом, чтобы отделить эффект интерфейса от эффекта сборки.
+:::

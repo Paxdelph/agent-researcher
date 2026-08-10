@@ -1,0 +1,51 @@
+/*-- scss:defaults --*/
+/* Researcher report theme tokens — white page so plotly blends in. */
+
+$rr-bg: #ffffff !default;
+$rr-surface: #f3f5f7 !default;
+$rr-ink: #1a2330 !default;
+$rr-muted: #5a6573 !default;
+$rr-border: #e3e7ec !default;
+$rr-border-strong: #c5ccd6 !default;
+$rr-accent: #245a86 !default;
+$rr-finding: #245a86 !default;
+$rr-warning: #9a6428 !default;
+$rr-recommend: #276849 !default;
+$rr-pos: #276849 !default;
+$rr-neg: #a33b2b !default;
+$rr-radius: 6px !default;
+$rr-font-body: "Source Sans 3", "Helvetica Neue", Helvetica, Arial, sans-serif !default;
+$rr-font-display: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Palatino, serif !default;
+$rr-font-size: 1.02rem !default;
+$rr-line-height: 1.55 !default;
+
+$body-bg: $rr-bg !default;
+$body-color: $rr-ink !default;
+$link-color: $rr-accent !default;
+$font-family-sans-serif: $rr-font-body !default;
+$headings-font-family: $rr-font-display !default;
+
+/*-- scss:rules --*/
+
+:root {
+  --rr-bg: #{$rr-bg};
+  --rr-surface: #{$rr-surface};
+  --rr-ink: #{$rr-ink};
+  --rr-muted: #{$rr-muted};
+  --rr-border: #{$rr-border};
+  --rr-border-strong: #{$rr-border-strong};
+  --rr-accent: #{$rr-accent};
+  --rr-finding: #{$rr-finding};
+  --rr-warning: #{$rr-warning};
+  --rr-recommend: #{$rr-recommend};
+  --rr-pos: #{$rr-pos};
+  --rr-neg: #{$rr-neg};
+  --rr-radius: #{$rr-radius};
+  --rr-font-body: #{$rr-font-body};
+  --rr-font-display: #{$rr-font-display};
+  --rr-font-size: #{$rr-font-size};
+  --rr-line-height: #{$rr-line-height};
+}
+
+@import "base";
+@import "components";

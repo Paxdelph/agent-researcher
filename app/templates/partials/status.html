@@ -1,0 +1,35 @@
+<div id="header-status" class="header-tokens"
+     hx-get="/partials/status"
+     hx-trigger="refresh"
+     hx-swap="outerHTML">
+  <div class="run-status" title="{{ state.status_text }}">
+    <span class="agent-activity agent-activity-inline" aria-live="polite">
+      <span class="agent-dot" aria-hidden="true"></span>
+    </span>
+    <div class="run-status-text">
+      <code class="run-stage">{{ state.stage.value }}</code>
+      <span class="run-sep">·</span>
+      <code class="run-state">{{ state.status.value }}</code>
+    </div>
+  </div>
+
+  <div class="token-chip" title="OpenAI in/out: {{ tokens.openai_in }} / {{ tokens.openai_out }}">
+    <span class="muted">openai</span>
+    <strong>{{ tokens.openai }}</strong>
+  </div>
+  <div class="token-chip" title="Anthropic in/out: {{ tokens.anthropic_in }} / {{ tokens.anthropic_out }}">
+    <span class="muted">anthropic</span>
+    <strong>{{ tokens.anthropic }}</strong>
+  </div>
+  <div class="token-chip total" title="{% if tokens.limit %}Использовано / лимит (max_total_tokens){% else %}Сумма токенов прогона (лимит выключен){% endif %}">
+    <span class="muted">total</span>
+    <strong>{{ tokens.total }}</strong>
+    {% if tokens.limit %}
+    <span class="muted">/</span>
+    <strong class="token-limit">{{ tokens.limit }}</strong>
+    <span class="token-pct">{{ tokens.pct }}%</span>
+    {% else %}
+    <span class="muted">· без лимита</span>
+    {% endif %}
+  </div>
+</div>

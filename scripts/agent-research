@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Launch agent-researcher for the current (or given) research folder.
+set -euo pipefail
+
+resolve_script() {
+  local source="${BASH_SOURCE[0]}"
+  while [[ -L "$source" ]]; do
+    local dir
+    dir="$(cd -P "$(dirname "$source")" && pwd)"
+    source="$(readlink "$source")"
+    [[ "$source" != /* ]] && source="$dir/$source"
+  done
+  cd -P "$(dirname "$source")" && pwd
+}
+
+SCRIPT_DIR="$(resolve_script)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+BUILD=0
+RESET=0
+DETACH=0
+RESEARCH_PATH=""
+
+usage() {
+  cat <<EOF
+Usage: agent-research [RESEARCH_PATH] [options]
+
+Run from inside a research folder:
+  cd ~/Work/my-projects/agent-researcher/researches/example
+  agent-research
+
+Or pass a path:
+  agent-research ~/Work/my-projects/agent-researcher/researches/example
+
+Shared company context lives one level above the research
+(e.g. researches/context.md for researches/example). Override with CONTEXT_FILE.
+
+Options:
+  --build       Rebuild Docker image
+  --reset       Clear saved run state before start
+  -d, --detach  Run containers in background
+  -h, --help    Show help
+
+Environment:
+  AGENT_RESEARCHER_HOME  Override project root (default: auto from this script)
+  CONTEXT_FILE           Host path to shared company context.md
+EOF
+}
+
+if [[ -n "${AGENT_RESEARCHER_HOME:-}" ]]; then
+  ROOT="$(cd "$AGENT_RESEARCHER_HOME" && pwd)"
+fi
+
+for arg in "$@"; do
+  case "$arg" in
+    --build) BUILD=1 ;;
+    --reset) RESET=1 ;;
+    -d|--detach) DETACH=1 ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -*)
+      echo "Unknown option: $arg" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      RESEARCH_PATH="$arg"
+      ;;
+  esac
+done
+
+if [[ -z "$RESEARCH_PATH" ]]; then
+  RESEARCH_PATH="$PWD"
+fi
+
+if [[ ! -d "$RESEARCH_PATH" ]]; then
+  echo "Research folder not found: $RESEARCH_PATH" >&2
+  exit 1
+fi
+RESEARCH_PATH="$(cd "$RESEARCH_PATH" && pwd)"
+ANALYST_ROOT="$(cd "$RESEARCH_PATH/.." && pwd)"
+
+mkdir -p "$RESEARCH_PATH/data"
+
+CONTEXT_FILE="${CONTEXT_FILE:-$ANALYST_ROOT/context.md}"
+if [[ ! -f "$CONTEXT_FILE" ]]; then
+  legacy="$RESEARCH_PATH/context.md"
+  if [[ -f "$legacy" ]]; then
+    mkdir -p "$(dirname "$CONTEXT_FILE")"
+    mv "$legacy" "$CONTEXT_FILE"
+    echo "Migrated context: $legacy → $CONTEXT_FILE"
+  else
+    mkdir -p "$(dirname "$CONTEXT_FILE")"
+    cat > "$CONTEXT_FILE" <<'EOF'
+# Контекст компании / продукта
+
+Общий фон для всех рисерчей этого аналитика. Brief конкретной задачи — в UI / brief рисерча.
+EOF
+    echo "Created empty context stub: $CONTEXT_FILE"
+  fi
+fi
+
+if [[ ! -f "$ROOT/.env" ]]; then
+  echo "Missing $ROOT/.env — copy .env.example and add API keys." >&2
+  exit 1
+fi
+
+if [[ ! -f "$ROOT/config.yaml" ]]; then
+  cp "$ROOT/config.example.yaml" "$ROOT/config.yaml"
+fi
+
+cd "$ROOT"
+export RESEARCH_PATH
+export CONTEXT_FILE
+
+echo "Project:   $ROOT"
+echo "Workspace: $RESEARCH_PATH"
+echo "Context:   $CONTEXT_FILE"
+echo "UI:        http://127.0.0.1:8787"
+
+if [[ "$RESET" -eq 1 ]]; then
+  echo "Reset:     clearing run state volume"
+  docker compose down
+  docker volume rm \
+    "${COMPOSE_PROJECT_NAME:-$(basename "$ROOT")}_agent_researcher_state" \
+    agent_researcher_state \
+    2>/dev/null || true
+fi
+
+compose_args=(up)
+if [[ "$DETACH" -eq 1 ]]; then
+  compose_args+=(-d)
+fi
+if [[ "$BUILD" -eq 1 ]]; then
+  compose_args+=(--build)
+fi
+
+docker compose "${compose_args[@]}"

@@ -1,0 +1,22 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    environment:
+      AGENT_RESEARCHER_CONFIG: /app/config.yaml
+      STATE_DIR: /app-state
+      WORKSPACE_PATH: /workspace
+      CONTEXT_PATH: /company/context.md
+    volumes:
+      - ${RESEARCH_PATH:-./researches/example}:/workspace
+      - ${CONTEXT_FILE:-./researches/context.md}:/company/context.md
+      - ./config.yaml:/app/config.yaml:ro
+      - ./app:/app/app:ro
+      - ./quarto:/app/quarto:ro
+      - agent_researcher_state:/app-state
+
+volumes:
+  agent_researcher_state:
