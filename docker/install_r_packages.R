@@ -45,6 +45,7 @@ install_needed(c(
   "readr",
   "dplyr",
   "tidyr",
+  "purrr",
   "stringr",
   "lubridate",
   "scales",

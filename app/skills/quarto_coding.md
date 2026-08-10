@@ -92,7 +92,8 @@ N в ячейке &lt; 30 — не ранжируем сегмент.
 
 ## Стиль кода R
 
-- Пакеты: `tidyverse` / `dplyr`/`readr`/`tidyr`, `plotly`, при необходимости `lubridate`, `scales`, `stringr`.
+- Пакеты — **только явные**, без `library(tidyverse)` (его нет в образе):  
+  `readr`, `dplyr`, `tidyr`, `stringr`, `lubridate`, `scales`, `plotly`, `knitr`; при необходимости `purrr`, `tibble`.
 - Один setup-чанк в начале: library + чтение CSV + базовые prep.
 - `knitr::opts_chunk$set(out.width = "100%", fig.align = "center")`.
 - Имена объектов понятные; без магии.
