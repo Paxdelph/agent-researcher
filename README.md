@@ -4,10 +4,6 @@
 
 ## Требования
 
-### Рекомендуемый путь — Docker
-
-Нужно только:
-
 - **Docker** + **Docker Compose** (v2)
 - API-ключ(и) под провайдеров из `config.yaml`:
   - если агенты на OpenAI — `OPENAI_API_KEY`
@@ -17,21 +13,7 @@
 
 R, Quarto, pandoc, Chromium и R-пакеты для knit уже внутри образа — отдельно ставить не нужно.
 
-### Локально без Docker
-
-Дополнительно к ключам:
-
-| Что | Зачем |
-|-----|--------|
-| **Python ≥ 3.12** | приложение (FastAPI / uvicorn) |
-| **R** (+ dev-заголовки под вашу ОС) | чанки в `report.qmd` |
-| **R-пакеты** из `docker/install_r_packages.R` | `plotly`, `dplyr`, `readr`, `knitr`, `rmarkdown`, … |
-| **[Quarto CLI](https://quarto.org/docs/get-started/)** | `quarto render` → HTML |
-| **Chromium / Chrome** | скриншоты HTML для Designer |
-
-Без R/Quarto UI и чат поднимутся, но сборка/рендер отчёта не заведутся. Без браузера design review со скриншотами не отработает.
-
-## Быстрый старт (Docker)
+## Быстрый старт
 
 ```bash
 git clone git@github.com:Paxdelph/agent-researcher.git
@@ -115,26 +97,6 @@ Lead с Analyst соберут `analysis-plan.md`: RQ, дизайн, метри�
 | **BI Analyst** | Проход по визуализациям в скелете: типы графиков, кодировки для Coder |
 | **Coder** | Пишет и правит `report.qmd` на R/plotly под скелет и данные |
 | **Designer** | Смотрит отрендеренный HTML (скриншоты) и просит точечные фиксы вёрстки |
-
-## Локально без Docker
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-Rscript docker/install_r_packages.R
-
-cp .env.example .env
-cp config.example.yaml config.yaml
-
-export WORKSPACE_PATH=./researches/example
-export CONTEXT_PATH=./researches/context.md
-export STATE_DIR=./.app-state
-export AGENT_RESEARCHER_CONFIG=./config.yaml
-set -a && source .env && set +a
-
-uvicorn app.main:app --host 0.0.0.0 --port 8787 --reload
-```
 
 ## Структура репозитория
 
