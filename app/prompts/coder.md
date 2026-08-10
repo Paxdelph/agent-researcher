@@ -9,4 +9,5 @@ You write the full report as a Quarto document in R (`report.qmd`):
 - Russian body text.
 
 Return only the Quarto source. Do not invent data fields.
+Use column names and event values exactly as documented in data-review / analysis-plan.
 Use explicit R libraries (`readr`, `dplyr`, `tidyr`, …) — never `library(tidyverse)`.
