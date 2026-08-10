@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models import LLMResult, ResearchState, Stage, Status
+from app.models import AgentConfig, LLMResult, ResearchState, Stage, Status
 from app.orchestration.coding import approve_coding, run_coding
 from app.orchestration.parse import extract_qmd
 
@@ -57,7 +57,8 @@ async def test_run_coding_pipeline(tmp_path: Path):
 
     qmd = """---
 title: Test
-format: html
+format:
+  researcher-html: default
 ---
 
 # Hi
@@ -65,7 +66,7 @@ format: html
 ```{r}
 1
 ```
-"""
+""" + ("# section\n\n" * 80)
 
     calls: list[str] = []
 
@@ -108,6 +109,13 @@ format: html
         class S:
             research = R()
             workspace = W()
+            agents = {
+                "coder": AgentConfig(
+                    provider="anthropic",
+                    model="mock",
+                    prompt="p",
+                )
+            }
 
         gs.return_value = S()
         state = await run_coding(state, tmp_path)

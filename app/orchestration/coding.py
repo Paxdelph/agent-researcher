@@ -10,6 +10,7 @@ from app.models import ChatMessage, ImagePart, ResearchState, Stage, Status
 from app.orchestration.context import artifact_excerpt, coding_context_block
 from app.orchestration.parse import extract_qmd, parse_json_object
 from app.orchestration.planning import brief_block
+from app.orchestration.qmd_validate import QmdValidationError, validate_coder_result, validate_qmd_text
 from app.orchestration.render import (
     RenderError,
     html_excerpt,
@@ -111,21 +112,24 @@ async def _render_with_data_check(
     current = read_workspace_text(workspace, settings.research.report_file)
     ctx = coding_context_block(workspace)
     issues = "\n".join(f"- {w}" for w in warnings)
-    await _coder_write(
-        state,
-        workspace,
-        summary="Coder: подключение данных в report.qmd",
-        user_message=(
-            "Quarto отрендерился, но отчёт пустой — данные не подключены.\n"
-            "Исправь setup/чтение CSV: используй **реальные** имена колонок и "
-            "`event_name` из Data review / Fresh profile. Не выдумывай `event_time`, "
-            "`checkout_start` и т.п.\n"
-            "Верни полный обновлённый `report.qmd`.\n\n"
-            f"## Проблемы в HTML\n{issues}\n\n"
-            f"{ctx}\n\n"
-            f"## Current report.qmd\n```qmd\n{current}\n```\n"
-        ),
-    )
+    try:
+        await _coder_write(
+            state,
+            workspace,
+            summary="Coder: подключение данных в report.qmd",
+            user_message=(
+                "Quarto отрендерился, но отчёт пустой — данные не подключены.\n"
+                "Исправь setup/чтение CSV: используй **реальные** имена колонок и "
+                "`event_name` из Data review / Fresh profile. Не выдумывай `event_time`, "
+                "`checkout_start` и т.п.\n"
+                "Верни полный обновлённый `report.qmd`.\n\n"
+                f"## Проблемы в HTML\n{issues}\n\n"
+                f"{ctx}\n\n"
+                f"## Current report.qmd\n```qmd\n{current}\n```\n"
+            ),
+        )
+    except QmdValidationError as exc:
+        raise RenderError(str(exc)) from exc
     html_path = _render_and_store(state, workspace)
     warnings = report_data_warnings(html_path)
     if warnings:
@@ -143,6 +147,8 @@ async def _coder_write(
     user_message: str,
     summary: str,
 ) -> str:
+    settings = get_settings()
+    agent = settings.agents["coder"]
     result = await run_agent(
         state=state,
         agent_name="coder",
@@ -156,10 +162,43 @@ async def _coder_write(
         ],
     )
     qmd = extract_qmd(result.text)
-    settings = get_settings()
+    validate_coder_result(result, qmd, agent)
     path = write_workspace_text(workspace, settings.research.report_file, qmd)
     state.artifacts.report = str(path)
     return qmd
+
+
+def _designer_blank_report(review: dict) -> bool:
+    notes = (review.get("notes") or "").lower()
+    issues = " ".join(review.get("issues") or []).lower()
+    blob = f"{notes} {issues}"
+    signals = (
+        "бел",
+        "white",
+        "пуст",
+        "blank",
+        "не содержат видимого",
+        "чистые белые",
+    )
+    return any(s in blob for s in signals)
+
+
+def _fail_coding(state: ResearchState, message: str) -> ResearchState:
+    state.status = Status.FAILED
+    state.error = message
+    state.status_text = "Coder не собрал report.qmd"
+    state.active_role = None
+    state.chat.append(
+        ChatMessage(
+            role="assistant",
+            content=(
+                "Не удалось собрать `report.qmd` — файл не перезаписан пустым черновиком.\n"
+                f"```\n{message}\n```\n"
+                "Попробуйте «переделай отчёт с нуля» после перезапуска с обновлённым config."
+            ),
+        )
+    )
+    return state
 
 
 def _fail_render(state: ResearchState, exc: RenderError, *, after_fix: bool = False) -> ResearchState:
@@ -229,20 +268,23 @@ async def _design_cycle(
     if review["verdict"] == "revise" and allow_fix and review["issues"]:
         issues_block = "\n".join(f"- {x}" for x in review["issues"])
         current = read_workspace_text(workspace, settings.research.report_file)
-        await _coder_write(
-            state,
-            workspace,
-            summary="Coder: фикс по design review",
-            user_message=(
-                "Исправь визуальные замечания Designer. Один раунд фикса. "
-                "Верни полный обновлённый `report.qmd`.\n"
-                "Сохрани подключение данных к реальным колонкам из data-review.\n\n"
-                f"## Designer issues\n{issues_block}\n\n"
-                f"## Designer notes\n{review['notes'] or '(нет)'}\n\n"
-                f"{ctx}\n\n"
-                f"## Current report.qmd\n```qmd\n{current}\n```\n"
-            ),
-        )
+        try:
+            await _coder_write(
+                state,
+                workspace,
+                summary="Coder: фикс по design review",
+                user_message=(
+                    "Исправь визуальные замечания Designer. Один раунд фикса. "
+                    "Верни полный обновлённый `report.qmd`.\n"
+                    "Сохрани подключение данных к реальным колонкам из data-review.\n\n"
+                    f"## Designer issues\n{issues_block}\n\n"
+                    f"## Designer notes\n{review['notes'] or '(нет)'}\n\n"
+                    f"{ctx}\n\n"
+                    f"## Current report.qmd\n```qmd\n{current}\n```\n"
+                ),
+            )
+        except QmdValidationError as exc:
+            return _fail_coding(state, str(exc))
         try:
             html_path = await _render_with_data_check(
                 state, workspace, allow_data_fix=False
@@ -253,7 +295,12 @@ async def _design_cycle(
         review = await _run_designer(
             state, workspace, pass_index=2, html_path=html_path
         )
+        qmd_now = read_workspace_text(workspace, settings.research.report_file)
+        qmd_issues = validate_qmd_text(qmd_now)
         if review["verdict"] == "revise":
+            if qmd_issues or _designer_blank_report(review):
+                detail = "; ".join(qmd_issues) if qmd_issues else review["notes"] or "пустой отчёт"
+                return _fail_coding(state, f"Design review не пройден: {detail}")
             review = {
                 "verdict": "approve",
                 "issues": review["issues"],
@@ -286,7 +333,7 @@ async def rerender_and_review(state: ResearchState, workspace: Path) -> Research
     """Re-render existing report.qmd and run design cycle (one fix round)."""
     settings = get_settings()
     existing = read_workspace_text(workspace, settings.research.report_file)
-    if not existing:
+    if not existing.strip():
         return await run_coding(state, workspace)
     state.stage = Stage.CODING
     state.status = Status.RUNNING
@@ -309,19 +356,22 @@ async def run_coding(state: ResearchState, workspace: Path) -> ResearchState:
     brief = brief_block(state, workspace)
     ctx = coding_context_block(workspace)
 
-    await _coder_write(
-        state,
-        workspace,
-        summary="Coder: черновик report.qmd",
-        user_message=(
-            "Собери полный `report.qmd` по skill quarto_coding и скелету.\n"
-            "Format: `researcher-html: default`. Без CSS/`<style>`.\n"
-            "Plotly без modeBar. Semantic-блоки (.finding/.kpi/.warning/.recommendation).\n"
-            "Только реальные поля данных из Data review / Fresh profile.\n\n"
-            f"## Brief\n{brief}\n\n"
-            f"{ctx}\n"
-        ),
-    )
+    try:
+        await _coder_write(
+            state,
+            workspace,
+            summary="Coder: черновик report.qmd",
+            user_message=(
+                "Собери полный `report.qmd` по skill quarto_coding и скелету.\n"
+                "Format: `researcher-html: default`. Без CSS/`<style>`.\n"
+                "Plotly без modeBar. Semantic-блоки (.finding/.kpi/.warning/.recommendation).\n"
+                "Только реальные поля данных из Data review / Fresh profile.\n\n"
+                f"## Brief\n{brief}\n\n"
+                f"{ctx}\n"
+            ),
+        )
+    except QmdValidationError as exc:
+        return _fail_coding(state, str(exc))
     return await _design_cycle(state, workspace, allow_fix=True)
 
 

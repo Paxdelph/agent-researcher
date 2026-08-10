@@ -53,7 +53,7 @@ class AgentConfig(BaseModel):
     model: str
     prompt: str
     skills: list[str] = Field(default_factory=list)
-    max_output_tokens: int = 8000
+    max_output_tokens: int = 0  # 0 = без лимита (потолок провайдера)
 
 
 class AppConfig(BaseModel):

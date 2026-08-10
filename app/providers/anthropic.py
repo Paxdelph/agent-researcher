@@ -9,6 +9,7 @@ import time
 from anthropic import AsyncAnthropic
 
 from app.models import LLMRequest, LLMResult
+from app.providers.output_tokens import resolve_max_output_tokens
 
 _TEMPERATURE_UNSUPPORTED = re.compile(
     r"claude-(sonnet|opus|haiku|fable)-(\d+)(?:-(\d+))?$",
@@ -65,7 +66,7 @@ class AnthropicProvider:
 
         kwargs: dict = {
             "model": request.model,
-            "max_tokens": request.max_output_tokens,
+            "max_tokens": resolve_max_output_tokens(self.name, request.max_output_tokens),
             "system": system,
             "messages": [{"role": "user", "content": content}],
         }

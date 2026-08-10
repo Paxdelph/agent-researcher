@@ -108,7 +108,7 @@ agents:
       - design_review
 
 limits:
-  # 0 = без лимита
+  # 0 = без лимита (max_output_tokens у агентов по умолчанию тоже 0)
   max_total_tokens: 0
   max_single_call_input_tokens: 0
   default_timeout_seconds: 600

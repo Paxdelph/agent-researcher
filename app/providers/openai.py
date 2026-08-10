@@ -9,6 +9,7 @@ import time
 from openai import AsyncOpenAI
 
 from app.models import LLMRequest, LLMResult
+from app.providers.output_tokens import resolve_max_output_tokens
 
 # gpt-5*, o1/o3/o4* — use max_completion_tokens; temperature often unsupported.
 _NEW_PARAM_MODELS = re.compile(
@@ -44,6 +45,7 @@ class OpenAIProvider:
                 + f"\n\n[{len(request.images)} image(s) attached — "
                 "use an Anthropic vision model for visual review.]"
             )
+        limit = resolve_max_output_tokens(self.name, request.max_output_tokens)
         kwargs: dict = {
             "model": request.model,
             "messages": [
@@ -52,9 +54,9 @@ class OpenAIProvider:
             ],
         }
         if _uses_max_completion_tokens(request.model):
-            kwargs["max_completion_tokens"] = request.max_output_tokens
+            kwargs["max_completion_tokens"] = limit
         else:
-            kwargs["max_tokens"] = request.max_output_tokens
+            kwargs["max_tokens"] = limit
         if _supports_temperature(request.model):
             kwargs["temperature"] = request.temperature
         if request.json_mode:
